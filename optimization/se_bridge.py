@@ -56,7 +56,7 @@ class SimulationEngineerBridge:
         include_events: bool = False,
         full_grid: bool = False,
     ) -> List[dict]:
-        return self.se.run_simulation_from_data(
+        results = self.se.run_simulation_from_data(
             schedule=schedule,
             events=events,
             parking=parking,
@@ -64,6 +64,16 @@ class SimulationEngineerBridge:
             include_events=include_events,
             full_grid=full_grid,
         )
+
+        # The official SE stores the flow-slot code (S0-S4) under the key
+        # "shift" (not to be confused with schedule.csv's Ca1-Ca4 shift).
+        # optimizer.py and test_optimizer.py were written against a "slot"
+        # key. Alias it here, at the adapter boundary, so no SE formula or
+        # OE logic has to change.
+        for row in results:
+            row.setdefault("slot", row.get("shift"))
+
+        return results
 
     def distance_weights(
         self, parking: List[dict], scenario: str
