@@ -1,7 +1,0 @@
-scenario;parking_lot_id;name;capacity_slots;checkin_gates_open;checkout_gates_open;checkin_sec_per_vehicle;checkout_sec_per_vehicle;max_checkin_throughput_veh_per_30min;max_checkout_throughput_veh_per_30min;notes
-Normal;P1;Nha xe khu giang duong A2-B;3000;2;2;3;10;1200;360;"Van hanh binh thuong: du 2 cong vao / 2 cong ra, toc do xu ly tieu chuan."
-Normal;P2;Nha xe khu giang duong C-D;3000;2;2;3;10;1200;360;"Van hanh binh thuong: du 2 cong vao / 2 cong ra, toc do xu ly tieu chuan."
-Normal;P3;Nha xe khu KTX;6000;2;2;3;10;1200;360;"Van hanh binh thuong: du 2 cong vao / 2 cong ra, toc do xu ly tieu chuan."
-Worst;P1;Nha xe khu giang duong A2-B;3000;2;1;4;13;900;138;Dieu kien bat loi cong don: troi mua (SV mac/coi ao mua lam cham thao tac ra/vao) ket hop su co ha tang. Rieng P1: 1/2 cong check-out dang bao tri.
-Worst;P2;Nha xe khu giang duong C-D;3000;2;2;4;12;900;300;Dieu kien bat loi cong don: troi mua (SV mac/coi ao mua lam cham thao tac ra/vao) ket hop su co ha tang.
-Worst;P3;Nha xe khu KTX;6000;2;2;4;12;900;300;Dieu kien bat loi cong don: troi mua (SV mac/coi ao mua lam cham thao tac ra/vao) ket hop su co ha tang.

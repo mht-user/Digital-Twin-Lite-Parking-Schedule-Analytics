@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Digital Twin Lite - NEU Campus Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background-color: #0a0f18; font-family: 'Segoe UI', system-ui, sans-serif; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #1f293d; border-radius: 4px; }
+</style>
+</head>
+<body class="text-slate-100 min-h-screen p-4 md:p-6 lg:p-8">
+
+  <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-6 border-b border-slate-800 mb-6 gap-4">
+    <div>
+      <h1 class="text-xl md:text-2xl font-bold text-white">NEU Digital Twin - Parking &amp; Schedule Analytics</h1>
+      <p class="text-xs text-slate-400 mt-0.5">Hệ thống giám sát tải trọng lịch học và bãi xe sinh viên ĐH Kinh tế Quốc dân</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs">
+        <span class="text-slate-400">Kịch bản:</span>
+        <select id="scenario-selector" onchange="fetchDashboardData()" class="bg-transparent text-cyan-400 font-bold outline-none cursor-pointer">
+          <option value="Normal">Normal (Tiêu chuẩn)</option>
+          <option value="Worst">Worst (Mưa / Cổng bảo trì)</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs">
+        <span class="text-slate-400">Sự kiện:</span>
+        <select id="events-selector" onchange="fetchDashboardData()" class="bg-transparent text-purple-400 font-bold outline-none cursor-pointer">
+          <option value="true">Có tính sự kiện (events.csv)</option>
+          <option value="false">Không tính sự kiện</option>
+        </select>
+      </div>
+      <button onclick="fetchDashboardData()" class="px-3 py-1.5 text-xs font-semibold bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 rounded-lg border border-cyan-500/30">
+        Làm mới
+      </button>
+    </div>
+  </header>
+
+  <div id="api-error" class="hidden mb-6 p-4 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-sm">
+    Không kết nối được API (<code>/api/dashboard</code>). Hãy chạy <code>python3 serve_dashboard.py</code>
+    trong thư mục dự án rồi mở lại trang này qua <code>http://localhost:8080</code> (không mở trực tiếp file HTML).
+  </div>
+
+  <section id="kpi-section" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs font-semibold uppercase">Total Sessions</div>
+      <div class="mt-2 text-2xl font-extrabold text-white" id="kpi-sessions">-</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs font-semibold uppercase">Total Students</div>
+      <div class="mt-2 text-2xl font-extrabold text-cyan-400" id="kpi-students">-</div>
+    </div>
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-xs font-semibold uppercase">Peak Demand</div>
+      <div class="mt-2 text-2xl font-extrabold text-amber-400" id="kpi-peak-demand">-</div>
+      <div class="text-[11px] text-slate-500 mt-1" id="kpi-peak-demand-sub">-</div>
+    </div>
+    <div class="bg-slate-900 border border-rose-900/40 rounded-xl p-4">
+      <div class="text-slate-400 text-xs font-semibold uppercase">Worst Parking</div>
+      <div class="mt-2 flex items-baseline justify-between">
+        <div class="text-2xl font-extrabold text-rose-500" id="kpi-worst-parking">-</div>
+        <span class="text-xs px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 text-rose-400 font-bold" id="kpi-worst-rate">-</span>
+      </div>
+      <div class="text-[11px] text-rose-400/80 mt-1" id="kpi-worst-parking-sub">-</div>
+    </div>
+    <div class="bg-slate-900 border border-amber-900/40 rounded-xl p-4">
+      <div class="text-slate-400 text-xs font-semibold uppercase">Worst Time Window</div>
+      <div class="mt-2 text-xl font-extrabold text-amber-300" id="kpi-worst-time">-</div>
+      <div class="text-[11px] text-slate-500 mt-1" id="kpi-worst-time-sub">-</div>
+    </div>
+  </section>
+
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
+    <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-5">
+      <div class="flex justify-between items-center pb-4 mb-4 border-b border-slate-800">
+        <div>
+          <h2 class="text-base font-bold text-white">Schedule Heatmap</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Tổng SV có mặt trên giảng đường theo Ca học và Thứ (từ schedule.csv)</p>
+        </div>
+        <span id="active-schedule-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-950 text-cyan-300 border border-cyan-800/60">
+          Hiện trạng (BEFORE)
+        </span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-center border-collapse">
+          <thead>
+            <tr class="text-xs font-semibold text-slate-400 border-b border-slate-800">
+              <th class="py-3 px-3 text-left w-24">Ca học</th>
+              <th class="py-3 px-2">Mon</th><th class="py-3 px-2">Tue</th><th class="py-3 px-2">Wed</th>
+              <th class="py-3 px-2">Thu</th><th class="py-3 px-2">Fri</th><th class="py-3 px-2">Sat</th>
+            </tr>
+          </thead>
+          <tbody id="heatmap-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col">
+      <h2 class="text-base font-bold text-white pb-3 border-b border-slate-800 mb-3">Optimization &amp; Recommendation</h2>
+      <p class="text-xs text-slate-400 mb-3">
+        Gọi trực tiếp optimizer thật (<code>optimize_multi_move</code>) trên dataset hiện tại - không phải số minh hoạ.
+        Lần chạy đầu mất khoảng 10-15 giây.
+      </p>
+      <div class="flex items-center gap-2 mb-3">
+        <label class="text-xs text-slate-400">Số move tối đa:</label>
+        <input id="max-moves-input" type="number" value="3" min="1" max="10" class="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
+        <button id="btn-run-optimize" onclick="runOptimization()" class="ml-auto px-3 py-1.5 text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-lg">
+          Chạy tối ưu
+        </button>
+      </div>
+      <div id="optimize-status" class="text-xs text-slate-500 mb-3"></div>
+      <div id="optimize-result" class="hidden">
+        <table class="w-full text-xs mb-3">
+          <thead>
+            <tr class="text-slate-400 border-b border-slate-800 text-left">
+              <th class="py-1">Chỉ số</th><th class="py-1 text-center">BEFORE</th><th class="py-1 text-center text-cyan-400">AFTER</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/60" id="optimize-metrics-body"></tbody>
+        </table>
+        <div class="text-[11px] font-bold text-slate-300 uppercase mb-2">Danh sách move đã áp dụng</div>
+        <div id="optimize-moves-list" class="space-y-1.5 mb-3 max-h-40 overflow-y-auto"></div>
+        <button id="btn-toggle-opt" onclick="toggleOptimizationView()" class="w-full py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500 text-xs font-extrabold">
+          XEM KẾT QUẢ SAU TỐI ƯU (AFTER)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <section class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center pb-4 mb-4 border-b border-slate-800 gap-3">
+      <h2 class="text-base font-bold text-white">Parking View (P1 - P4)</h2>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <select id="filter-day" onchange="renderParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
+          <option value="ALL">Tất cả ngày</option>
+          <option value="Mon">Mon</option><option value="Tue">Tue</option><option value="Wed">Wed</option>
+          <option value="Thu">Thu</option><option value="Fri">Fri</option><option value="Sat">Sat</option>
+        </select>
+        <select id="filter-slot" onchange="renderParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
+          <option value="ALL">Tất cả khung giờ</option>
+        </select>
+        <select id="filter-lot" onchange="renderParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
+          <option value="ALL">Tất cả nhà xe</option>
+          <option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option><option value="P4">P4</option>
+        </select>
+        <button onclick="resetFilters()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700">Xóa lọc</button>
+      </div>
+    </div>
+    <div class="text-[11px] text-slate-500 mb-2" id="table-record-count"></div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs text-center">
+        <thead>
+          <tr class="text-slate-400 border-b border-slate-800">
+            <th class="py-2 px-2 text-left">Ngày</th>
+            <th class="py-2 px-2 text-left">Khung giờ</th>
+            <th class="py-2 px-2">Bãi xe</th>
+            <th class="py-2 px-2 text-right">Vào (xe)</th>
+            <th class="py-2 px-2 text-right">Ra (xe)</th>
+            <th class="py-2 px-2 text-right">Check-in cap.</th>
+            <th class="py-2 px-2 text-right">Check-out cap.</th>
+            <th class="py-2 px-2 w-40">Worst Util</th>
+            <th class="py-2 px-2">Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody id="parking-table-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+<script>
+  let basePayload = null;       // tu /api/dashboard - LICH HIEN TAI
+  let optimizePayload = null;   // tu /api/optimize - null cho den khi bam "Chay toi uu"
+  let displayMode = 'base';     // 'base' | 'after'
+
+  function currentHeatmap() {
+    if (displayMode === 'after' && optimizePayload && optimizePayload.available) {
+      return optimizePayload.after.heatmap;
+    }
+    return basePayload ? basePayload.heatmap : null;
+  }
+
+  function currentParkingView() {
+    if (displayMode === 'after' && optimizePayload && optimizePayload.available) {
+      return optimizePayload.after.parking_view;
+    }
+    return basePayload ? basePayload.parking_view : null;
+  }
+
+  async function fetchDashboardData() {
+    const scenario = document.getElementById('scenario-selector').value;
+    const includeEvents = document.getElementById('events-selector').value;
+    document.getElementById('api-error').classList.add('hidden');
+
+    // Clear stale optimization results when inputs change.
+    optimizePayload = null;
+    displayMode = 'base';
+    document.getElementById('optimize-result').classList.add('hidden');
+    document.getElementById('optimize-status').innerText = '';
+
+    try {
+      const res = await fetch(`/api/dashboard?scenario=${scenario}&include_events=${includeEvents}`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      basePayload = await res.json();
+    } catch (err) {
+      document.getElementById('api-error').classList.remove('hidden');
+      basePayload = null;
+      return;
+    }
+    populateSlotFilter(basePayload.slot_labels);
+    renderAll();
+  }
+
+  function populateSlotFilter(slotLabels) {
+    const sel = document.getElementById('filter-slot');
+    const keep = sel.value;
+    sel.innerHTML = '<option value="ALL">Tất cả khung giờ</option>';
+    Object.keys(slotLabels).sort().forEach(slot => {
+      const opt = document.createElement('option');
+      opt.value = slot;
+      opt.innerText = `${slot} — ${slotLabels[slot]}`;
+      sel.appendChild(opt);
+    });
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+  }
+
+  function renderAll() {
+    if (!basePayload) return;
+    renderKPIs();
+    renderHeatmap();
+    renderParkingTable();
+  }
+
+  function renderKPIs() {
+    document.getElementById('kpi-sessions').innerText = basePayload.kpi.total_sessions.toLocaleString('vi-VN');
+    document.getElementById('kpi-students').innerText = basePayload.kpi.total_students.toLocaleString('vi-VN');
+
+    // Recalculate KPIs for the active view.
+    const heatmap = currentHeatmap();
+    let peakDay = null, peakShift = null, peakVal = -1;
+    for (const day in heatmap) {
+      for (const shift in heatmap[day]) {
+        if (heatmap[day][shift] > peakVal) { peakVal = heatmap[day][shift]; peakDay = day; peakShift = shift; }
+      }
+    }
+    document.getElementById('kpi-peak-demand').innerText = peakVal.toLocaleString('vi-VN') + ' SV';
+    document.getElementById('kpi-peak-demand-sub').innerText = `${peakDay} - ${peakShift}`;
+
+    const pv = currentParkingView();
+    const worst = pv.reduce((a, b) => (b.worst_utilization_pct > a.worst_utilization_pct ? b : a), pv[0]);
+    document.getElementById('kpi-worst-parking').innerText = worst.parking_lot;
+    document.getElementById('kpi-worst-rate').innerText = `${worst.worst_utilization_pct}%`;
+    document.getElementById('kpi-worst-parking-sub').innerText = `${worst.day} · ${worst.slot_label} · ${worst.bottleneck_direction}`;
+    document.getElementById('kpi-worst-time').innerText = `${worst.day}`;
+    document.getElementById('kpi-worst-time-sub').innerText = worst.slot_label;
+  }
+
+  function renderHeatmap() {
+    const heatmap = currentHeatmap();
+    const tbody = document.getElementById('heatmap-body');
+    tbody.innerHTML = '';
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    ['Ca1', 'Ca2', 'Ca3', 'Ca4'].forEach(shift => {
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-slate-800/50';
+      const th = document.createElement('td');
+      th.className = 'py-3 px-3 text-left font-bold text-white';
+      th.innerText = shift;
+      tr.appendChild(th);
+      days.forEach(day => {
+        const td = document.createElement('td');
+        const val = (heatmap[day] && heatmap[day][shift]) || 0;
+        let color = 'bg-slate-800/70 text-slate-400';
+        if (val > 3500) color = 'bg-rose-950/80 text-rose-300 font-bold';
+        else if (val > 2500) color = 'bg-amber-950/70 text-amber-300 font-semibold';
+        else if (val > 1500) color = 'bg-blue-900/60 text-blue-200';
+        td.innerHTML = `<div class="p-2 m-0.5 rounded-lg ${color}">${val.toLocaleString('vi-VN')}</div>`;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderParkingTable() {
+    const pv = currentParkingView();
+    if (!pv) return;
+    const dayFilter = document.getElementById('filter-day').value;
+    const slotFilter = document.getElementById('filter-slot').value;
+    const lotFilter = document.getElementById('filter-lot').value;
+    const tbody = document.getElementById('parking-table-body');
+    tbody.innerHTML = '';
+
+    const list = pv.filter(r =>
+      (dayFilter === 'ALL' || r.day === dayFilter) &&
+      (slotFilter === 'ALL' || r.slot === slotFilter) &&
+      (lotFilter === 'ALL' || r.parking_lot === lotFilter)
+    );
+    document.getElementById('table-record-count').innerText = `Hiển thị ${list.length} / ${pv.length} bản ghi`;
+
+    list.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-slate-800/40';
+      let badge = `<span class="px-2 py-0.5 rounded-full text-xs bg-emerald-950 text-emerald-400 border border-emerald-800">OK</span>`;
+      let bar = 'bg-emerald-400';
+      if (item.status === 'BOTTLENECK') { badge = `<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-rose-950 text-rose-400 border border-rose-800">BOTTLENECK</span>`; bar = 'bg-rose-500'; }
+      else if (item.status === 'PEAK') { badge = `<span class="px-2 py-0.5 rounded-full text-xs bg-amber-950 text-amber-400 border border-amber-800">PEAK</span>`; bar = 'bg-amber-400'; }
+
+      tr.innerHTML = `
+        <td class="py-2 px-2 text-left font-semibold text-slate-300">${item.day}</td>
+        <td class="py-2 px-2 text-left text-slate-400">${item.slot_label}</td>
+        <td class="py-2 px-2"><span class="px-2 py-0.5 rounded bg-slate-800 font-mono font-bold text-cyan-400">${item.parking_lot}</span></td>
+        <td class="py-2 px-2 text-right font-mono">${item.incoming.toLocaleString('vi-VN')}</td>
+        <td class="py-2 px-2 text-right font-mono">${item.outgoing.toLocaleString('vi-VN')}</td>
+        <td class="py-2 px-2 text-right font-mono text-emerald-300">${item.checkin_capacity}</td>
+        <td class="py-2 px-2 text-right font-mono text-amber-300">${item.checkout_capacity}</td>
+        <td class="py-2 px-2">
+          <div class="flex items-center gap-2">
+            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden"><div class="h-full ${bar}" style="width:${Math.min(item.worst_utilization_pct,100)}%"></div></div>
+            <span class="font-mono text-xs w-12 text-right">${item.worst_utilization_pct}%</span>
+          </div>
+        </td>
+        <td class="py-2 px-2">${badge}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function resetFilters() {
+    document.getElementById('filter-day').value = 'ALL';
+    document.getElementById('filter-slot').value = 'ALL';
+    document.getElementById('filter-lot').value = 'ALL';
+    renderParkingTable();
+  }
+
+  async function runOptimization() {
+    const scenario = document.getElementById('scenario-selector').value;
+    const includeEvents = document.getElementById('events-selector').value;
+    const maxMoves = document.getElementById('max-moves-input').value || 3;
+    const btn = document.getElementById('btn-run-optimize');
+    const status = document.getElementById('optimize-status');
+
+    btn.disabled = true;
+    btn.innerText = 'Đang chạy...';
+    status.innerText = 'Đang gọi optimizer thật (optimize_multi_move) - lần đầu cho tổ hợp tham số này có thể mất 10-15 giây...';
+
+    try {
+      const res = await fetch(`/api/optimize?scenario=${scenario}&include_events=${includeEvents}&max_moves=${maxMoves}`);
+      const data = await res.json();
+      if (!data.available) {
+        status.innerText = 'Optimizer chưa sẵn sàng: ' + (data.reason || 'không rõ lý do');
+        btn.disabled = false;
+        btn.innerText = 'Chạy tối ưu';
+        return;
+      }
+      optimizePayload = data;
+      status.innerText = `Đã tối ưu xong: ${data.moves_applied} move áp dụng (lý do dừng: ${data.stop_reason}).`;
+      renderOptimizeResult(data);
+      document.getElementById('optimize-result').classList.remove('hidden');
+    } catch (err) {
+      status.innerText = 'Lỗi khi gọi /api/optimize: ' + err.message;
+    }
+    btn.disabled = false;
+    btn.innerText = 'Chạy lại tối ưu';
+  }
+
+  function renderOptimizeResult(data) {
+    const before = data.before.metrics;
+    const after = data.after.metrics;
+    const rows = [
+      ['Bottleneck points', before.bottleneck_points, after.bottleneck_points],
+      ['Total overload excess', before.total_overload_excess.toFixed(3), after.total_overload_excess.toFixed(3)],
+      ['Max worst util', (before.max_worst_util * 100).toFixed(1) + '%', (after.max_worst_util * 100).toFixed(1) + '%'],
+    ];
+    document.getElementById('optimize-metrics-body').innerHTML = rows.map(r =>
+      `<tr><td class="py-1.5 text-slate-300">${r[0]}</td><td class="py-1.5 text-center font-mono">${r[1]}</td><td class="py-1.5 text-center font-mono text-cyan-400">${r[2]}</td></tr>`
+    ).join('');
+
+    document.getElementById('optimize-moves-list').innerHTML = data.moves.map((m, i) =>
+      `<div class="p-2 rounded-lg bg-slate-800/60 text-[11px] flex justify-between">
+        <span>${i + 1}. ${m.class_id} (${m.num_students} SV, ${m.building})</span>
+        <span class="text-cyan-400 font-mono">${m.from_day} ${m.from_shift} ➔ ${m.to_day} ${m.to_shift}</span>
+      </div>`
+    ).join('') || '<div class="text-slate-500 text-[11px]">Optimizer không tìm được move nào cải thiện objective.</div>';
+  }
+
+  function toggleOptimizationView() {
+    if (!optimizePayload || !optimizePayload.available) return;
+    displayMode = displayMode === 'base' ? 'after' : 'base';
+    const btn = document.getElementById('btn-toggle-opt');
+    const badge = document.getElementById('active-schedule-badge');
+    if (displayMode === 'after') {
+      btn.innerText = 'QUAY LẠI HIỆN TRẠNG (BEFORE)';
+      badge.innerText = 'ĐÃ TỐI ƯU (AFTER)';
+      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-800/60';
+    } else {
+      btn.innerText = 'XEM KẾT QUẢ SAU TỐI ƯU (AFTER)';
+      badge.innerText = 'Hiện trạng (BEFORE)';
+      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-950 text-cyan-300 border border-cyan-800/60';
+    }
+    renderAll();
+  }
+
+  window.addEventListener('DOMContentLoaded', fetchDashboardData);
+</script>
+</body>
+</html>
