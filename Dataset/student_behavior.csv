@@ -1,0 +1,4 @@
+﻿distance_group,gap_0_leave_ratio,gap_1_leave_ratio,gap_2plus_leave_ratio
+near,0.0,0.6,0.9
+medium,0.0,0.3,0.75
+far,0.0,0.1,0.5
