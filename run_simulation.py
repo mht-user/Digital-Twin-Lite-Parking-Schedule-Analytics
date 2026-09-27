@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATASET_DIR = BASE_DIR / "Dataset"
 
 BUILDINGS = ["A2", "B", "C", "D"]
-PARKING_LOTS = ["P1", "P2", "P3", "P4"]
+PARKING_LOTS = ["P1", "P2", "P3"]  # thu tu uu tien hien thi/sap xep - so bai xe THUC LAY tu parking.csv (xem get_parking_lot_ids)
 
 DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -34,6 +34,7 @@ SLOT_LABELS = {
 PEAK_THRESHOLD = 0.90        # >= 90%  va <= 100%  -> PEAK
 BOTTLENECK_THRESHOLD = 1.0   # > 100%              -> BOTTLENECK
 
+# Sai so khi so sanh 2 so thuc
 EPS = 1e-9
 
 # DOC CSV
@@ -46,6 +47,12 @@ def read_csv(path: Path) -> List[dict]:
         return list(csv.DictReader(f))
 
 
+def read_csv_optional(path: Path) -> List[dict]:
+    if not path.exists():
+        return []
+    return read_csv(path)
+
+
 def load_dataset(dataset_dir: Path = DATASET_DIR) -> Dict[str, List[dict]]:
     return {
         "classes": read_csv(dataset_dir / "classes.csv"),
@@ -53,6 +60,9 @@ def load_dataset(dataset_dir: Path = DATASET_DIR) -> Dict[str, List[dict]]:
         "rooms": read_csv(dataset_dir / "rooms.csv"),
         "parking": read_csv(dataset_dir / "parking.csv"),
         "events": read_csv(dataset_dir / "events.csv"),
+        "students": read_csv_optional(dataset_dir / "students.csv"),
+        "enrollments": read_csv_optional(dataset_dir / "enrollments.csv"),
+        "student_behavior": read_csv_optional(dataset_dir / "student_behavior.csv"),
     }
 
 # VALIDATE DATASET
@@ -181,7 +191,6 @@ def build_building_flows(
     Dict[Tuple[str, str, str], float],
     Dict[str, Tuple[str, str]],
 ]:
-
     incoming: Dict[Tuple[str, str, str], float] = defaultdict(float)
     outgoing: Dict[Tuple[str, str, str], float] = defaultdict(float)
 
@@ -242,6 +251,11 @@ def build_building_flows(
 
 # DISTANCE WEIGHTS
 
+def get_parking_lot_ids(parking_rows: List[dict], scenario: str) -> List[str]:
+    ids = {row["parking_lot_id"] for row in parking_rows if row["scenario"] == scenario}
+    return sorted(ids, key=lambda x: PARKING_LOTS.index(x) if x in PARKING_LOTS else 99)
+
+
 def get_distance_weights(
     parking_rows: List[dict],
     scenario: str,
@@ -249,10 +263,8 @@ def get_distance_weights(
 
     lots = [row for row in parking_rows if row["scenario"] == scenario]
 
-    if len(lots) != len(PARKING_LOTS):
-        raise ValueError(
-            f"Khong tim thay du {len(PARKING_LOTS)} bai xe cho scenario '{scenario}'."
-        )
+    if not lots:
+        raise ValueError(f"Khong tim thay bai xe nao cho scenario '{scenario}'.")
 
     weights: Dict[str, Dict[str, float]] = {}
 
@@ -277,6 +289,7 @@ def get_distance_weights(
 
     return weights
 
+
 # PHAN BO LUONG VE P1-P4
 
 def distribute_flows_to_lots(
@@ -297,6 +310,7 @@ def distribute_flows_to_lots(
 
     return distribute(incoming_demand), distribute(outgoing_demand)
 
+
 # THROUGHPUT
 
 def get_gate_capacity(
@@ -312,6 +326,7 @@ def get_gate_capacity(
         for row in parking_rows
         if row["scenario"] == scenario
     }
+
 
 # STATUS / DIRECTION
 
@@ -329,6 +344,7 @@ def get_bottleneck_direction(checkin_ratio: float, checkout_ratio: float) -> str
     if abs(checkin_ratio - checkout_ratio) <= EPS:
         return "Both"
     return "Checkin" if checkin_ratio > checkout_ratio else "Checkout"
+
 
 # CORE SIMULATION
 
@@ -364,11 +380,12 @@ def run_simulation_from_data(
             {key[0] for key in incoming_demand} | {key[0] for key in outgoing_demand},
             key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99,
         )
+        lot_ids = get_parking_lot_ids(parking, scenario)
         all_keys = {
             (day, slot, lot_id)
             for day in days
             for slot in SLOT_ORDER
-            for lot_id in PARKING_LOTS
+            for lot_id in lot_ids
         }
     else:
         all_keys = set(incoming_lot) | set(outgoing_lot)
@@ -436,6 +453,7 @@ def run_simulation(
         include_events=include_events,
         full_grid=full_grid,
     )
+
 
 # WHAT-IF
 
@@ -537,6 +555,395 @@ def compare_before_after(
     )
     return results["before"], results["after"]
 
+
+REQUIRED_STUDENT_COLUMNS = ["student_id", "distance_group", "uses_motorbike"]
+REQUIRED_ENROLLMENT_COLUMNS = ["student_id", "class_id"]
+REQUIRED_BEHAVIOR_COLUMNS = [
+    "distance_group",
+    "gap_0_leave_ratio",
+    "gap_1_leave_ratio",
+    "gap_2plus_leave_ratio",
+]
+
+GAP_CATEGORIES = ["gap_0", "gap_1", "gap_2plus"]
+
+
+def validate_student_dataset(data: Dict[str, List[dict]]) -> None:
+    for key, required, filename in (
+        ("students", REQUIRED_STUDENT_COLUMNS, "students.csv"),
+        ("enrollments", REQUIRED_ENROLLMENT_COLUMNS, "enrollments.csv"),
+        ("student_behavior", REQUIRED_BEHAVIOR_COLUMNS, "student_behavior.csv"),
+    ):
+        rows = data.get(key) or []
+        if not rows:
+            raise ValueError(
+                f"{filename} khong co du lieu hoac khong ton tai - "
+                f"can file nay de chay mo hinh visit-based."
+            )
+        for column in required:
+            if column not in rows[0]:
+                raise ValueError(f"{filename} thieu cot: {column}")
+
+
+def load_leave_ratio_table(student_behavior: List[dict]) -> Dict[str, Dict[str, float]]:
+    table: Dict[str, Dict[str, float]] = {}
+    for row in student_behavior:
+        table[row["distance_group"]] = {
+            "gap_0": float(row["gap_0_leave_ratio"]),
+            "gap_1": float(row["gap_1_leave_ratio"]),
+            "gap_2plus": float(row["gap_2plus_leave_ratio"]),
+        }
+    return table
+
+
+def gap_category(num_skipped_shifts: int) -> str:
+    if num_skipped_shifts <= 0:
+        return "gap_0"
+    if num_skipped_shifts == 1:
+        return "gap_1"
+    return "gap_2plus"
+
+
+def get_leave_ratio(
+    leave_ratio_table: Dict[str, Dict[str, float]],
+    segment: str,
+    category: str,
+    default_leave_ratio: float = 0.0,
+) -> float:
+    return leave_ratio_table.get(segment, {}).get(category, default_leave_ratio)
+
+
+# A + B + C: gop ca lien tiep thanh 1 visit, tach gap theo leave_ratio
+
+def compute_visits(
+    shift_idxs: List[int],
+    weight: float,
+    segment: str,
+    leave_ratio_table: Dict[str, Dict[str, float]],
+    default_leave_ratio: float = 0.0,
+) -> List[dict]:
+    idxs = sorted(set(shift_idxs))
+    if not idxs:
+        return []
+
+    active = [(idxs[0], weight)]   # (checkin_shift_idx, weight)
+    closed: List[dict] = []
+
+    for prev_idx, idx in zip(idxs, idxs[1:]):
+        skipped = idx - prev_idx - 1
+        category = gap_category(skipped)
+        ratio = get_leave_ratio(leave_ratio_table, segment, category, default_leave_ratio)
+
+        new_active = []
+        for checkin_idx, w in active:
+            leave_w = w * ratio
+            stay_w = w - leave_w
+
+            if stay_w > EPS:
+                new_active.append((checkin_idx, stay_w))   # visit tiep tuc mo qua gap
+
+            if leave_w > EPS:
+                closed.append({
+                    "checkin_shift_idx": checkin_idx,
+                    "checkout_shift_idx": prev_idx,
+                    "weight": leave_w,
+                })
+                new_active.append((idx, leave_w))          # visit moi mo tu ca sau gap
+
+        active = new_active
+
+    last_idx = idxs[-1]
+    for checkin_idx, w in active:
+        if w > EPS:
+            closed.append({
+                "checkin_shift_idx": checkin_idx,
+                "checkout_shift_idx": last_idx,
+                "weight": w,
+            })
+
+    return closed
+
+
+def build_student_shifts_from_dataset(
+    data: Dict[str, List[dict]],
+) -> List[dict]:
+    students = data["students"]
+    enrollments = data["enrollments"]
+    schedule = data["schedule"]
+
+    student_info = {
+        row["student_id"]: (row["distance_group"], row["uses_motorbike"] in ("1", "true", "True"))
+        for row in students
+    }
+
+    schedule_by_class: Dict[str, List[dict]] = defaultdict(list)
+    for row in schedule:
+        schedule_by_class[row["class_id"]].append(row)
+
+    rows: List[dict] = []
+
+    for enroll in enrollments:
+        student_id = enroll["student_id"]
+        class_id = enroll["class_id"]
+
+        info = student_info.get(student_id)
+        if info is None:
+            continue
+
+        segment, uses_motorbike = info
+        if not uses_motorbike:
+            continue
+
+        for sched_row in schedule_by_class.get(class_id, []):
+            shift = sched_row["shift"]
+            if shift not in SHIFT_ORDER:
+                raise ValueError(f"schedule.csv co shift khong hop le: {shift}")
+
+            rows.append({
+                "student_id": student_id,
+                "day_of_week": sched_row["day_of_week"],
+                "shift_idx": SHIFT_ORDER.index(shift),
+                "building": sched_row["building"],
+                "schedule_id": sched_row["schedule_id"],
+                "segment": segment,
+                "weight": 1.0,
+            })
+
+    return rows
+
+
+def build_visits_from_dataset(
+    data: Dict[str, List[dict]],
+    default_leave_ratio: float = 0.0,
+) -> List[dict]:
+    student_shift_rows = build_student_shifts_from_dataset(data)
+    leave_ratio_table = load_leave_ratio_table(data["student_behavior"])
+
+    # (student_id, day) -> {shift_idx: (building, schedule_id)}
+    grouped: Dict[Tuple[str, str], Dict[int, Tuple[str, str]]] = defaultdict(dict)
+    segment_of: Dict[Tuple[str, str], str] = {}
+    weight_of: Dict[Tuple[str, str], float] = {}
+
+    for row in student_shift_rows:
+        key = (row["student_id"], row["day_of_week"])
+        grouped[key][row["shift_idx"]] = (row["building"], row["schedule_id"])
+        segment_of[key] = row["segment"]
+        weight_of[key] = row["weight"]
+
+    visits: List[dict] = []
+
+    for key, shift_meta in grouped.items():
+        _student_id, day = key
+        idxs = sorted(shift_meta.keys())
+
+        raw_visits = compute_visits(
+            idxs, weight_of[key], segment_of[key], leave_ratio_table, default_leave_ratio
+        )
+
+        for v in raw_visits:
+            checkin_building, checkin_source_id = shift_meta[v["checkin_shift_idx"]]
+            _checkout_building, checkout_source_id = shift_meta[v["checkout_shift_idx"]]
+
+            visits.append({
+                "day": day,
+                "checkin_slot": SLOT_ORDER[v["checkin_shift_idx"]],
+                "checkout_slot": SLOT_ORDER[v["checkout_shift_idx"] + 1],
+                "building": checkin_building,      # quy tac D
+                "checkin_source_id": checkin_source_id,
+                "checkout_source_id": checkout_source_id,
+                "weight": v["weight"],
+            })
+
+    return visits
+
+
+# D + core: phan bo visit ve P1-P4, giu nguyen 1 bai cho ca 2 dau visit
+
+def run_visit_based_simulation(
+    data: Dict[str, List[dict]],
+    scenario: str = "Normal",
+    include_events: bool = True,
+    full_grid: bool = False,
+    default_leave_ratio: float = 0.0,
+) -> Tuple[List[dict], Dict[Tuple[str, str, str, str], List[Tuple[str, float]]]]:
+    if scenario not in ("Normal", "Worst"):
+        raise ValueError("scenario phai la 'Normal' hoac 'Worst'")
+
+    validate_student_dataset(data)
+
+    parking = data["parking"]
+    events = data["events"]
+
+    visits = build_visits_from_dataset(data, default_leave_ratio)
+    distance_weights = get_distance_weights(parking, scenario)
+
+    incoming_lot: Dict[Tuple[str, str, str], float] = defaultdict(float)
+    outgoing_lot: Dict[Tuple[str, str, str], float] = defaultdict(float)
+    contributors: Dict[Tuple[str, str, str, str], List[Tuple[str, float]]] = defaultdict(list)
+
+    for v in visits:
+        for lot_id, wt in distance_weights[v["building"]].items():
+            flow = v["weight"] * wt
+            if flow <= EPS:
+                continue
+
+            incoming_lot[(v["day"], v["checkin_slot"], lot_id)] += flow
+            outgoing_lot[(v["day"], v["checkout_slot"], lot_id)] += flow
+
+            contributors[(v["day"], v["checkin_slot"], lot_id, "checkin")].append(
+                (v["checkin_source_id"], flow)
+            )
+            contributors[(v["day"], v["checkout_slot"], lot_id, "checkout")].append(
+                (v["checkout_source_id"], flow)
+            )
+
+    # EVENTS: events.csv khong co enrollment rieng, giu nguyen mo hinh
+    # don gian (1 ca = checkin truoc, checkout sau), giong engine legacy.
+    event_days = set()
+    if include_events:
+        event_shift_slot_map = build_event_shift_slot_map()
+
+        for row in events:
+            shift = row["shift"]
+            if shift not in event_shift_slot_map:
+                raise ValueError(f"Event co shift khong hop le: {shift}")
+
+            day = row["day_of_week"]
+            building = row["building"]
+            event_days.add(day)
+
+            vehicles = float(row["num_students"]) * float(row["motorbike_ratio"])
+            arrival_slot, departure_slot = event_shift_slot_map[shift]
+            source_id = row.get("event_id", "EVENT")
+
+            for lot_id, wt in distance_weights[building].items():
+                flow = vehicles * wt
+                if flow <= EPS:
+                    continue
+
+                incoming_lot[(day, arrival_slot, lot_id)] += flow
+                outgoing_lot[(day, departure_slot, lot_id)] += flow
+
+                contributors[(day, arrival_slot, lot_id, "checkin")].append((source_id, flow))
+                contributors[(day, departure_slot, lot_id, "checkout")].append((source_id, flow))
+
+    gate_capacity = get_gate_capacity(parking, scenario)
+
+    if full_grid:
+        days = sorted(
+            {v["day"] for v in visits} | event_days,
+            key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99,
+        )
+        lot_ids = get_parking_lot_ids(parking, scenario)
+        all_keys = {
+            (day, slot, lot_id)
+            for day in days
+            for slot in SLOT_ORDER
+            for lot_id in lot_ids
+        }
+    else:
+        all_keys = set(incoming_lot) | set(outgoing_lot)
+
+    results: List[dict] = []
+
+    for day, slot, lot_id in all_keys:
+        if lot_id not in gate_capacity:
+            raise ValueError(f"Khong co throughput cho bai {lot_id}")
+
+        capacity = gate_capacity[lot_id]
+        checkin_capacity = capacity["checkin"]
+        checkout_capacity = capacity["checkout"]
+
+        incoming = incoming_lot.get((day, slot, lot_id), 0.0)
+        outgoing = outgoing_lot.get((day, slot, lot_id), 0.0)
+
+        checkin_util = (
+            incoming / checkin_capacity if checkin_capacity > 0
+            else (float("inf") if incoming > 0 else 0.0)
+        )
+        checkout_util = (
+            outgoing / checkout_capacity if checkout_capacity > 0
+            else (float("inf") if outgoing > 0 else 0.0)
+        )
+        worst_util = max(checkin_util, checkout_util)
+
+        results.append({
+            "day": day,
+            "shift": slot,
+            "lot_id": lot_id,
+            "incoming": incoming,
+            "outgoing": outgoing,
+            "checkin_capacity": checkin_capacity,
+            "checkout_capacity": checkout_capacity,
+            "checkin_util": checkin_util,
+            "checkout_util": checkout_util,
+            "worst_util": worst_util,
+            "bottleneck_direction": get_bottleneck_direction(checkin_util, checkout_util),
+            "status": classify_status(worst_util),
+        })
+
+    results.sort(key=_sort_key)
+    return results, contributors
+
+
+# E. Output ho tro OE: session/schedule_id nao dong gop bao nhieu
+
+def get_top_contributors(
+    contributors: Dict[Tuple[str, str, str, str], List[Tuple[str, float]]],
+    day: str,
+    slot: str,
+    lot_id: str,
+    direction: str,
+    top_n: int = 10,
+) -> List[Tuple[str, float]]:
+    """direction: 'checkin' hoac 'checkout'."""
+    items = contributors.get((day, slot, lot_id, direction), [])
+
+    agg: Dict[str, float] = defaultdict(float)
+    for source_id, flow in items:
+        agg[source_id] += flow
+
+    return sorted(agg.items(), key=lambda kv: -kv[1])[:top_n]
+
+
+def print_contributors(
+    contributors: Dict[Tuple[str, str, str, str], List[Tuple[str, float]]],
+    day: str,
+    slot: str,
+    lot_id: str,
+    direction: str,
+    top_n: int = 10,
+) -> None:
+    label = "Checkin" if direction == "checkin" else "Checkout"
+    print(f"{day} {slot} {lot_id} {label}")
+
+    ranked = get_top_contributors(contributors, day, slot, lot_id, direction, top_n)
+    if not ranked:
+        print("  (khong co du lieu)")
+        return
+
+    for source_id, flow in ranked:
+        print(f"  {source_id} : {flow:.1f} vehicles")
+
+
+def explain_bottlenecks(
+    results: List[dict],
+    contributors: Dict[Tuple[str, str, str, str], List[Tuple[str, float]]],
+    top_n: int = 5,
+) -> None:
+    for r in results:
+        if r["status"] not in ("PEAK", "BOTTLENECK"):
+            continue
+
+        direction = r["bottleneck_direction"]
+
+        if direction in ("Checkin", "Both"):
+            print_contributors(contributors, r["day"], r["shift"], r["lot_id"], "checkin", top_n)
+        if direction in ("Checkout", "Both"):
+            print_contributors(contributors, r["day"], r["shift"], r["lot_id"], "checkout", top_n)
+        print()
+
+
 # SORT
 
 def _sort_key(row: dict):
@@ -544,6 +951,7 @@ def _sort_key(row: dict):
     slot_idx = SLOT_ORDER.index(row["shift"]) if row["shift"] in SLOT_ORDER else 99
     lot_idx = PARKING_LOTS.index(row["lot_id"]) if row["lot_id"] in PARKING_LOTS else 99
     return (day_idx, slot_idx, lot_idx)
+
 
 # OUTPUT
 
@@ -654,6 +1062,7 @@ def save_csv(rows: List[dict], out_path: Path) -> None:
         for result in rows:
             writer.writerow([result["scenario"]] + result_to_row(result))
 
+
 # CLI
 
 def main():
@@ -682,6 +1091,16 @@ def main():
     parser.add_argument("--move-n", type=int, default=0,
                         help="So lop can chuyen")
 
+    # Mo hinh visit-based (A-E), dung enrollment thuc
+    parser.add_argument("--visit-model", action="store_true",
+                        help="Dung engine visit-based (theo timeline sinh vien) thay vi engine legacy")
+    parser.add_argument("--explain", action="store_true",
+                        help="(chi voi --visit-model) In contributor breakdown cho cac dong PEAK/BOTTLENECK")
+    parser.add_argument("--top-n", type=int, default=5,
+                        help="So contributor toi da moi dong khi dung --explain")
+    parser.add_argument("--default-leave-ratio", type=float, default=0.0,
+                        help="leave_ratio fallback neu thieu segment/gap trong student_behavior.csv")
+
     args = parser.parse_args()
 
     dataset_dir = Path(args.dataset_dir)
@@ -696,6 +1115,37 @@ def main():
     slot_windows = get_slot_windows(data["schedule"])
 
     all_results: List[dict] = []
+
+    if args.visit_model:
+        validate_student_dataset(data)
+
+        for scenario in scenarios:
+            results, contributors = run_visit_based_simulation(
+                data,
+                scenario=scenario,
+                include_events=include_events,
+                full_grid=args.full_grid,
+                default_leave_ratio=args.default_leave_ratio,
+            )
+
+            shown = (
+                [r for r in results if r["status"] in ("PEAK", "BOTTLENECK")]
+                if args.only_bottleneck else results
+            )
+            print_report(shown, scenario, "Output (visit-based)", slot_windows)
+            print()
+
+            if args.explain:
+                explain_bottlenecks(results, contributors, top_n=args.top_n)
+
+            all_results.extend({**r, "scenario": scenario} for r in shown)
+
+        if args.out:
+            out_path = Path(args.out)
+            save_csv(all_results, out_path)
+            print(f"Da luu ket qua vao: {out_path}")
+        return
+
 
     for scenario in scenarios:
         before = run_simulation_from_data(
