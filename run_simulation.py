@@ -3,24 +3,18 @@ from __future__ import annotations
 import argparse
 import csv
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
-
-# CAU HINH CHUNG
 
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_DIR = BASE_DIR / "Dataset"
 
 BUILDINGS = ["A2", "B", "C", "D"]
 PARKING_LOTS = ["P1", "P2", "P3", "P4"]
-
 DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
 SHIFT_ORDER = ["Ca1", "Ca2", "Ca3", "Ca4"]
-
-# 5 khung giao ca
 SLOT_ORDER = ["S0", "S1", "S2", "S3", "S4"]
-
 SLOT_LABELS = {
     "S0": "Truoc Ca1",
     "S1": "Giao Ca1-Ca2",
@@ -29,92 +23,91 @@ SLOT_LABELS = {
     "S4": "Sau Ca4",
 }
 
-# NGUONG PHAN LOAI
-
-PEAK_THRESHOLD = 0.90        # >= 90%  va <= 100%  -> PEAK
-BOTTLENECK_THRESHOLD = 1.0   # > 100%              -> BOTTLENECK
-
-# Sai so khi so sanh 2 so thuc
+PEAK_THRESHOLD = 0.90
+BOTTLENECK_THRESHOLD = 1.0
 EPS = 1e-9
 
-# DOC CSV
 
 def read_csv(path: Path) -> List[dict]:
     if not path.exists():
         raise FileNotFoundError(f"Khong tim thay file: {path}")
-
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
 
 def load_dataset(dataset_dir: Path = DATASET_DIR) -> Dict[str, List[dict]]:
+    dataset_dir = Path(dataset_dir)
     return {
         "classes": read_csv(dataset_dir / "classes.csv"),
         "schedule": read_csv(dataset_dir / "schedule.csv"),
         "rooms": read_csv(dataset_dir / "rooms.csv"),
         "parking": read_csv(dataset_dir / "parking.csv"),
         "events": read_csv(dataset_dir / "events.csv"),
+        "students": read_csv(dataset_dir / "students.csv"),
+        "enrollments": read_csv(dataset_dir / "enrollments.csv"),
+        "student_behavior": read_csv(dataset_dir / "student_behavior.csv"),
     }
 
-# VALIDATE DATASET
+
+def clone_dataset(data: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
+    return {key: [dict(row) for row in rows] for key, rows in data.items()}
+
 
 def validate_dataset(data: Dict[str, List[dict]]) -> None:
-    schedule = data["schedule"]
-    if not schedule:
-        raise ValueError("schedule.csv khong co du lieu.")
+    required_files = {
+        "classes": ["class_id", "num_students"],
+        "rooms": ["room_id", "building", "floor", "room_capacity"],
+        "schedule": [
+            "schedule_id", "class_id", "day_of_week", "day_vn", "shift",
+            "building", "room_id", "num_students", "arrival_window_start",
+            "arrival_window_end", "departure_window_start", "departure_window_end",
+        ],
+        "parking": [
+            "scenario", "parking_lot_id", "capacity_slots",
+            "max_checkin_throughput_veh_per_30min",
+            "max_checkout_throughput_veh_per_30min",
+            "dist_from_A2_m", "dist_from_B_m", "dist_from_C_m", "dist_from_D_m",
+        ],
+        "events": [
+            "event_id", "day_of_week", "shift", "building",
+            "num_students", "motorbike_ratio",
+        ],
+        "students": ["student_id", "distance_group", "uses_motorbike"],
+        "enrollments": ["student_id", "class_id"],
+        "student_behavior": [
+            "distance_group", "gap_0_leave_ratio", "gap_1_leave_ratio",
+            "gap_2plus_leave_ratio",
+        ],
+    }
 
-    schedule_required = [
-        "schedule_id", "class_id",
-        "day_of_week", "day_vn", "shift",
-        "building", "num_students", "motorbike_ratio",
-        # Bat buoc cho Tuan 5
-        "arrival_window_start", "arrival_window_end",
-        "departure_window_start", "departure_window_end",
-    ]
-    for column in schedule_required:
-        if column not in schedule[0]:
-            raise ValueError(f"schedule.csv thieu cot: {column}")
+    for key, columns in required_files.items():
+        rows = data.get(key)
+        if rows is None or not rows:
+            raise ValueError(f"Dataset thieu hoac rong: {key}")
+        missing = [column for column in columns if column not in rows[0]]
+        if missing:
+            raise ValueError(f"{key} thieu cot: {missing}")
 
-    parking = data["parking"]
-    if not parking:
-        raise ValueError("parking.csv khong co du lieu.")
+    scenarios = defaultdict(set)
+    for row in data["parking"]:
+        scenarios[row["scenario"]].add(row["parking_lot_id"])
+    for scenario in ("Normal", "Worst"):
+        if scenarios.get(scenario) != set(PARKING_LOTS):
+            raise ValueError(
+                f"parking.csv scenario {scenario} phai co dung P1/P2/P3/P4; "
+                f"hien co {sorted(scenarios.get(scenario, set()))}"
+            )
 
-    parking_required = [
-        "scenario", "parking_lot_id", "capacity_slots",
-        "max_checkin_throughput_veh_per_30min",
-        "max_checkout_throughput_veh_per_30min",
-        "dist_from_A2_m", "dist_from_B_m",
-        "dist_from_C_m", "dist_from_D_m",
-    ]
-    for column in parking_required:
-        if column not in parking[0]:
-            raise ValueError(f"parking.csv thieu cot: {column}")
 
-    events = data["events"]
-    if events:
-        event_required = [
-            "event_id", "day_of_week", "day_vn",
-            "shift", "building", "num_students", "motorbike_ratio",
-        ]
-        for column in event_required:
-            if column not in events[0]:
-                raise ValueError(f"events.csv thieu cot: {column}")
-
-# TIME HELPER
-
-def time_to_minutes(time_string: str) -> int:
-    hour, minute = time_string.strip().split(":")
+def time_to_minutes(value: str) -> int:
+    hour, minute = value.strip().split(":")
     return int(hour) * 60 + int(minute)
 
-# SLOT MAP  (neo theo CA, doc thoi gian tu WINDOW THUC TE)
 
 def build_window_slot_map(
     schedule: List[dict],
-) -> Tuple[
-    Dict[Tuple[str, str, str], str],   
-    Dict[str, Tuple[str, str]],        
-]:
-
+) -> Tuple[Dict[Tuple[str, str, str], str], Dict[str, Tuple[str, str]]]:
+    """Map schedule arrival/departure windows to the five traffic slots S0..S4."""
     window_slot_map: Dict[Tuple[str, str, str], str] = {}
     slot_bounds: Dict[str, List[str]] = {}
 
@@ -130,180 +123,225 @@ def build_window_slot_map(
     for row in schedule:
         shift = row["shift"]
         if shift not in SHIFT_ORDER:
-            raise ValueError(f"schedule.csv co shift khong hop le: {shift}")
+            raise ValueError(f"Shift khong hop le: {shift}")
+        idx = SHIFT_ORDER.index(shift)
 
-        shift_index = SHIFT_ORDER.index(shift)
-
-        # ARRIVAL -> S(N-1)
         a_start = row["arrival_window_start"].strip()
         a_end = row["arrival_window_end"].strip()
-        a_slot = SLOT_ORDER[shift_index]
-
+        a_slot = SLOT_ORDER[idx]
         a_key = ("arrival", a_start, a_end)
-        if window_slot_map.get(a_key, a_slot) != a_slot:
-            raise ValueError(
-                f"Arrival window {a_start}-{a_end} bi dung cho nhieu ca khac nhau."
-            )
+        previous = window_slot_map.get(a_key)
+        if previous is not None and previous != a_slot:
+            raise ValueError(f"Arrival window {a_start}-{a_end} map vao nhieu slot")
         window_slot_map[a_key] = a_slot
         register(a_slot, a_start, a_end)
 
-        # DEPARTURE -> S(N)
         d_start = row["departure_window_start"].strip()
         d_end = row["departure_window_end"].strip()
-        d_slot = SLOT_ORDER[shift_index + 1]
-
+        d_slot = SLOT_ORDER[idx + 1]
         d_key = ("departure", d_start, d_end)
-        if window_slot_map.get(d_key, d_slot) != d_slot:
-            raise ValueError(
-                f"Departure window {d_start}-{d_end} bi dung cho nhieu ca khac nhau."
-            )
+        previous = window_slot_map.get(d_key)
+        if previous is not None and previous != d_slot:
+            raise ValueError(f"Departure window {d_start}-{d_end} map vao nhieu slot")
         window_slot_map[d_key] = d_slot
         register(d_slot, d_start, d_end)
 
-    bounds = {
-        slot: (value[0], value[1])
-        for slot, value in slot_bounds.items()
-    }
-    return window_slot_map, bounds
+    return window_slot_map, {k: (v[0], v[1]) for k, v in slot_bounds.items()}
 
 
 def build_event_shift_slot_map() -> Dict[str, Tuple[str, str]]:
     return {
-        shift: (SLOT_ORDER[index], SLOT_ORDER[index + 1])
-        for index, shift in enumerate(SHIFT_ORDER)
+        shift: (SLOT_ORDER[idx], SLOT_ORDER[idx + 1])
+        for idx, shift in enumerate(SHIFT_ORDER)
     }
 
-# BUILD BUILDING FLOWS  (INCOMING / OUTGOING DOC LAP)
 
-def build_building_flows(
-    schedule: List[dict],
-    events: List[dict],
-    include_events: bool = True,
-) -> Tuple[
-    Dict[Tuple[str, str, str], float],
-    Dict[Tuple[str, str, str], float],
-    Dict[str, Tuple[str, str]],
-]:
-    incoming: Dict[Tuple[str, str, str], float] = defaultdict(float)
-    outgoing: Dict[Tuple[str, str, str], float] = defaultdict(float)
+def load_leave_ratio_table(student_behavior: List[dict]) -> Dict[str, Dict[str, float]]:
+    table: Dict[str, Dict[str, float]] = {}
+    for row in student_behavior:
+        table[row["distance_group"]] = {
+            "gap_0": float(row["gap_0_leave_ratio"]),
+            "gap_1": float(row["gap_1_leave_ratio"]),
+            "gap_2plus": float(row["gap_2plus_leave_ratio"]),
+        }
+    return table
 
-    window_slot_map, slot_bounds = build_window_slot_map(schedule)
 
-    # SCHEDULE
-    for row in schedule:
-        day = row["day_of_week"]
-        building = row["building"]
+def gap_category(skipped_shifts: int) -> str:
+    if skipped_shifts <= 0:
+        return "gap_0"
+    if skipped_shifts == 1:
+        return "gap_1"
+    return "gap_2plus"
 
-        vehicles = (
-            float(row["num_students"])
-            * float(row["motorbike_ratio"])
-        )
 
-        # INCOMING theo arrival_window
-        arrival_key = (
-            "arrival",
-            row["arrival_window_start"].strip(),
-            row["arrival_window_end"].strip(),
-        )
-        if arrival_key not in window_slot_map:
-            raise ValueError(f"Khong tim thay slot cho arrival window {arrival_key[1]}-{arrival_key[2]}")
-        incoming[(day, window_slot_map[arrival_key], building)] += vehicles
+def compute_visits(
+    shift_idxs: List[int],
+    weight: float,
+    segment: str,
+    leave_ratio_table: Dict[str, Dict[str, float]],
+    default_leave_ratio: float = 0.0,
+) -> List[dict]:
+    """
+    Convert one student's daily shift sequence to expected parking visits.
 
-        # OUTGOING theo departure_window
-        departure_key = (
-            "departure",
-            row["departure_window_start"].strip(),
-            row["departure_window_end"].strip(),
-        )
-        if departure_key not in window_slot_map:
-            raise ValueError(f"Khong tim thay slot cho departure window {departure_key[1]}-{departure_key[2]}")
-        outgoing[(day, window_slot_map[departure_key], building)] += vehicles
+    Consecutive shifts stay in one visit when gap_0_leave_ratio=0.
+    A gap splits the expected flow according to the configured leave ratio.
+    """
+    idxs = sorted(set(shift_idxs))
+    if not idxs:
+        return []
 
-    # EVENTS (bat/tat duoc)
-    if include_events:
-        event_shift_slot_map = build_event_shift_slot_map()
+    active = [(idxs[0], float(weight))]
+    closed: List[dict] = []
 
-        for row in events:
-            shift = row["shift"]
-            if shift not in event_shift_slot_map:
-                raise ValueError(f"Event co shift khong hop le: {shift}")
+    for previous_idx, current_idx in zip(idxs, idxs[1:]):
+        category = gap_category(current_idx - previous_idx - 1)
+        ratio = leave_ratio_table.get(segment, {}).get(category, default_leave_ratio)
+        ratio = min(1.0, max(0.0, float(ratio)))
 
-            day = row["day_of_week"]
-            building = row["building"]
+        next_active = []
+        for checkin_idx, flow_weight in active:
+            leave_weight = flow_weight * ratio
+            stay_weight = flow_weight - leave_weight
 
-            vehicles = (
-                float(row["num_students"])
-                * float(row["motorbike_ratio"])
+            if stay_weight > EPS:
+                next_active.append((checkin_idx, stay_weight))
+            if leave_weight > EPS:
+                closed.append({
+                    "checkin_shift_idx": checkin_idx,
+                    "checkout_shift_idx": previous_idx,
+                    "weight": leave_weight,
+                })
+                next_active.append((current_idx, leave_weight))
+        active = next_active
+
+    last_idx = idxs[-1]
+    for checkin_idx, flow_weight in active:
+        if flow_weight > EPS:
+            closed.append({
+                "checkin_shift_idx": checkin_idx,
+                "checkout_shift_idx": last_idx,
+                "weight": flow_weight,
+            })
+
+    return closed
+
+
+def build_student_shift_rows(data: Dict[str, List[dict]]) -> List[dict]:
+    student_info = {
+        row["student_id"]: {
+            "distance_group": row["distance_group"],
+            "uses_motorbike": row["uses_motorbike"] in ("1", "true", "True", 1, True),
+        }
+        for row in data["students"]
+    }
+
+    schedule_by_class: Dict[str, List[dict]] = defaultdict(list)
+    for row in data["schedule"]:
+        schedule_by_class[row["class_id"]].append(row)
+
+    rows: List[dict] = []
+    for enrollment in data["enrollments"]:
+        student_id = enrollment["student_id"]
+        info = student_info.get(student_id)
+        if not info or not info["uses_motorbike"]:
+            continue
+
+        for session in schedule_by_class.get(enrollment["class_id"], []):
+            shift = session["shift"]
+            if shift not in SHIFT_ORDER:
+                raise ValueError(f"Shift khong hop le: {shift}")
+            rows.append({
+                "student_id": student_id,
+                "day_of_week": session["day_of_week"],
+                "shift_idx": SHIFT_ORDER.index(shift),
+                "building": session["building"],
+                "schedule_id": session["schedule_id"],
+                "segment": info["distance_group"],
+                "weight": 1.0,
+            })
+    return rows
+
+
+def build_visits_from_dataset(
+    data: Dict[str, List[dict]],
+    default_leave_ratio: float = 0.0,
+) -> List[dict]:
+    student_shift_rows = build_student_shift_rows(data)
+    leave_ratio_table = load_leave_ratio_table(data["student_behavior"])
+
+    grouped: Dict[Tuple[str, str], Dict[int, Tuple[str, str]]] = defaultdict(dict)
+    segment_of: Dict[Tuple[str, str], str] = {}
+
+    for row in student_shift_rows:
+        key = (row["student_id"], row["day_of_week"])
+        shift_idx = row["shift_idx"]
+        if shift_idx in grouped[key]:
+            raise ValueError(
+                f"Student timetable conflict: {row['student_id']} "
+                f"{row['day_of_week']} {SHIFT_ORDER[shift_idx]}"
             )
+        grouped[key][shift_idx] = (row["building"], row["schedule_id"])
+        segment_of[key] = row["segment"]
 
-            arrival_slot, departure_slot = event_shift_slot_map[shift]
-            incoming[(day, arrival_slot, building)] += vehicles
-            outgoing[(day, departure_slot, building)] += vehicles
+    visits: List[dict] = []
+    for (student_id, day), shift_meta in grouped.items():
+        idxs = sorted(shift_meta)
+        raw_visits = compute_visits(
+            idxs,
+            weight=1.0,
+            segment=segment_of[(student_id, day)],
+            leave_ratio_table=leave_ratio_table,
+            default_leave_ratio=default_leave_ratio,
+        )
 
-    return incoming, outgoing, slot_bounds
+        for visit in raw_visits:
+            checkin_building, checkin_source_id = shift_meta[visit["checkin_shift_idx"]]
+            _checkout_building, checkout_source_id = shift_meta[visit["checkout_shift_idx"]]
+            visits.append({
+                "student_id": student_id,
+                "day": day,
+                "checkin_slot": SLOT_ORDER[visit["checkin_shift_idx"]],
+                "checkout_slot": SLOT_ORDER[visit["checkout_shift_idx"] + 1],
+                # The vehicle is parked once at the start of the visit and leaves
+                # the same parking lot at the end of that visit.
+                "building": checkin_building,
+                "checkin_source_id": checkin_source_id,
+                "checkout_source_id": checkout_source_id,
+                "weight": float(visit["weight"]),
+            })
+    return visits
 
-# DISTANCE WEIGHTS
+
+def get_parking_lot_ids(parking_rows: List[dict], scenario: str) -> List[str]:
+    ids = {row["parking_lot_id"] for row in parking_rows if row["scenario"] == scenario}
+    return sorted(ids, key=lambda lot: PARKING_LOTS.index(lot) if lot in PARKING_LOTS else 99)
+
 
 def get_distance_weights(
-    parking_rows: List[dict],
-    scenario: str,
+    parking_rows: List[dict], scenario: str
 ) -> Dict[str, Dict[str, float]]:
-
     lots = [row for row in parking_rows if row["scenario"] == scenario]
-
-    if len(lots) != len(PARKING_LOTS):
-        raise ValueError(
-            f"Khong tim thay du {len(PARKING_LOTS)} bai xe cho scenario '{scenario}'."
-        )
+    if not lots:
+        raise ValueError(f"Khong co parking data cho scenario {scenario}")
 
     weights: Dict[str, Dict[str, float]] = {}
-
     for building in BUILDINGS:
         column = f"dist_from_{building}_m"
-        inverse_distances = {}
-
+        inverse = {}
         for lot in lots:
             distance = float(lot[column])
             if distance <= 0:
-                raise ValueError(
-                    f"Khoang cach khong hop le ({column}={distance}) "
-                    f"cho bai {lot['parking_lot_id']}"
-                )
-            inverse_distances[lot["parking_lot_id"]] = 1.0 / distance
-
-        total = sum(inverse_distances.values())
-        weights[building] = {
-            parking_id: inverse_distance / total
-            for parking_id, inverse_distance in inverse_distances.items()
-        }
-
+                raise ValueError(f"Khoang cach khong hop le: {lot['parking_lot_id']} {column}")
+            inverse[lot["parking_lot_id"]] = 1.0 / distance
+        total = sum(inverse.values())
+        weights[building] = {lot: value / total for lot, value in inverse.items()}
     return weights
 
-# PHAN BO LUONG VE P1-P4
-
-def distribute_flows_to_lots(
-    incoming_demand: Dict[Tuple[str, str, str], float],
-    outgoing_demand: Dict[Tuple[str, str, str], float],
-    distance_weights: Dict[str, Dict[str, float]],
-) -> Tuple[
-    Dict[Tuple[str, str, str], float],
-    Dict[Tuple[str, str, str], float],
-]:
-
-    def distribute(demand):
-        lot_demand = defaultdict(float)
-        for (day, slot, building), total_motorbikes in demand.items():
-            for parking_id, weight in distance_weights[building].items():
-                lot_demand[(day, slot, parking_id)] += total_motorbikes * weight
-        return lot_demand
-
-    return distribute(incoming_demand), distribute(outgoing_demand)
-
-# THROUGHPUT
 
 def get_gate_capacity(
-    parking_rows: List[dict],
-    scenario: str,
+    parking_rows: List[dict], scenario: str
 ) -> Dict[str, Dict[str, int]]:
     return {
         row["parking_lot_id"]: {
@@ -315,7 +353,6 @@ def get_gate_capacity(
         if row["scenario"] == scenario
     }
 
-# STATUS / DIRECTION
 
 def classify_status(worst_ratio: float) -> str:
     if worst_ratio > BOTTLENECK_THRESHOLD + EPS:
@@ -332,86 +369,105 @@ def get_bottleneck_direction(checkin_ratio: float, checkout_ratio: float) -> str
         return "Both"
     return "Checkin" if checkin_ratio > checkout_ratio else "Checkout"
 
-# CORE SIMULATION
 
-def run_simulation_from_data(
-    schedule: List[dict],
-    events: List[dict],
-    parking: List[dict],
+def run_simulation_with_contributors(
+    data: Dict[str, List[dict]],
     scenario: str = "Normal",
     include_events: bool = True,
     full_grid: bool = False,
-) -> List[dict]:
-
+    default_leave_ratio: float = 0.0,
+) -> Tuple[List[dict], Dict[Tuple[str, str, str, str], List[Tuple[str, float]]]]:
+    """Canonical student/visit-based simulation used by dashboard and optimizer."""
+    validate_dataset(data)
     if scenario not in ("Normal", "Worst"):
-        raise ValueError("scenario phai la 'Normal' hoac 'Worst'")
+        raise ValueError("scenario phai la Normal hoac Worst")
 
-    # 1. INCOMING / OUTGOING DOC LAP
-    incoming_demand, outgoing_demand, slot_bounds = build_building_flows(
-        schedule, events, include_events=include_events
-    )
+    visits = build_visits_from_dataset(data, default_leave_ratio)
+    distance_weights = get_distance_weights(data["parking"], scenario)
 
-    # 2. PHAN BO VE P1-P4
-    distance_weights = get_distance_weights(parking, scenario)
-    incoming_lot, outgoing_lot = distribute_flows_to_lots(
-        incoming_demand, outgoing_demand, distance_weights
-    )
+    incoming_lot: Dict[Tuple[str, str, str], float] = defaultdict(float)
+    outgoing_lot: Dict[Tuple[str, str, str], float] = defaultdict(float)
+    contributors: Dict[Tuple[str, str, str, str], List[Tuple[str, float]]] = defaultdict(list)
 
-    # 3. THROUGHPUT
-    gate_capacity = get_gate_capacity(parking, scenario)
+    for visit in visits:
+        for lot_id, parking_weight in distance_weights[visit["building"]].items():
+            flow = visit["weight"] * parking_weight
+            if flow <= EPS:
+                continue
 
-    # 4. TAP KEY
+            incoming_key = (visit["day"], visit["checkin_slot"], lot_id)
+            outgoing_key = (visit["day"], visit["checkout_slot"], lot_id)
+            incoming_lot[incoming_key] += flow
+            outgoing_lot[outgoing_key] += flow
+
+            contributors[(visit["day"], visit["checkin_slot"], lot_id, "checkin")].append(
+                (visit["checkin_source_id"], flow)
+            )
+            contributors[(visit["day"], visit["checkout_slot"], lot_id, "checkout")].append(
+                (visit["checkout_source_id"], flow)
+            )
+
+    if include_events:
+        event_slot_map = build_event_shift_slot_map()
+        for event in data["events"]:
+            shift = event["shift"]
+            if shift not in event_slot_map:
+                raise ValueError(f"Event shift khong hop le: {shift}")
+            arrival_slot, departure_slot = event_slot_map[shift]
+            day = event["day_of_week"]
+            building = event["building"]
+            vehicles = float(event["num_students"]) * float(event["motorbike_ratio"])
+            source_id = event.get("event_id", "EVENT")
+
+            for lot_id, parking_weight in distance_weights[building].items():
+                flow = vehicles * parking_weight
+                incoming_lot[(day, arrival_slot, lot_id)] += flow
+                outgoing_lot[(day, departure_slot, lot_id)] += flow
+                contributors[(day, arrival_slot, lot_id, "checkin")].append((source_id, flow))
+                contributors[(day, departure_slot, lot_id, "checkout")].append((source_id, flow))
+
+    gate_capacity = get_gate_capacity(data["parking"], scenario)
     if full_grid:
         days = sorted(
-            {key[0] for key in incoming_demand} | {key[0] for key in outgoing_demand},
-            key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 99,
+            {key[0] for key in incoming_lot} | {key[0] for key in outgoing_lot},
+            key=lambda day: DAY_ORDER.index(day) if day in DAY_ORDER else 99,
         )
         all_keys = {
-            (day, slot, lot_id)
+            (day, slot, lot)
             for day in days
             for slot in SLOT_ORDER
-            for lot_id in PARKING_LOTS
+            for lot in get_parking_lot_ids(data["parking"], scenario)
         }
     else:
         all_keys = set(incoming_lot) | set(outgoing_lot)
 
-    # 5. UTILIZATION
     results: List[dict] = []
-
     for day, slot, lot_id in all_keys:
-        if lot_id not in gate_capacity:
-            raise ValueError(f"Khong co throughput cho bai {lot_id}")
-
         capacity = gate_capacity[lot_id]
+        incoming = incoming_lot.get((day, slot, lot_id), 0.0)
+        outgoing = outgoing_lot.get((day, slot, lot_id), 0.0)
         checkin_capacity = capacity["checkin"]
         checkout_capacity = capacity["checkout"]
 
-        incoming = incoming_lot.get((day, slot, lot_id), 0.0)
-        outgoing = outgoing_lot.get((day, slot, lot_id), 0.0)
-
-        # checkin_util  = incoming / max_checkin_throughput_veh_per_30min
         checkin_util = (
             incoming / checkin_capacity if checkin_capacity > 0
             else (float("inf") if incoming > 0 else 0.0)
         )
-
-        # checkout_util = outgoing / max_checkout_throughput_veh_per_30min
         checkout_util = (
             outgoing / checkout_capacity if checkout_capacity > 0
             else (float("inf") if outgoing > 0 else 0.0)
         )
-
         worst_util = max(checkin_util, checkout_util)
 
         results.append({
             "day": day,
-            "slot": slot,
-            "slot_window": slot_bounds.get(slot),
+            "shift": slot,
             "lot_id": lot_id,
             "incoming": incoming,
             "outgoing": outgoing,
             "checkin_capacity": checkin_capacity,
             "checkout_capacity": checkout_capacity,
+            "parking_capacity": capacity["capacity_slots"],
             "checkin_util": checkin_util,
             "checkout_util": checkout_util,
             "worst_util": worst_util,
@@ -420,7 +476,41 @@ def run_simulation_from_data(
         })
 
     results.sort(key=_sort_key)
+    return results, contributors
+
+
+def run_simulation_from_dataset(
+    data: Dict[str, List[dict]],
+    scenario: str = "Normal",
+    include_events: bool = True,
+    full_grid: bool = False,
+    default_leave_ratio: float = 0.0,
+) -> List[dict]:
+    results, _ = run_simulation_with_contributors(
+        data,
+        scenario=scenario,
+        include_events=include_events,
+        full_grid=full_grid,
+        default_leave_ratio=default_leave_ratio,
+    )
     return results
+
+
+def simulate_schedule(
+    base_data: Dict[str, List[dict]],
+    schedule: List[dict],
+    scenario: str = "Normal",
+    include_events: bool = True,
+    full_grid: bool = False,
+) -> List[dict]:
+    candidate_data = dict(base_data)
+    candidate_data["schedule"] = schedule
+    return run_simulation_from_dataset(
+        candidate_data,
+        scenario=scenario,
+        include_events=include_events,
+        full_grid=full_grid,
+    )
 
 
 def run_simulation(
@@ -430,303 +520,156 @@ def run_simulation(
     full_grid: bool = False,
 ) -> List[dict]:
     data = load_dataset(dataset_dir)
-    validate_dataset(data)
-    return run_simulation_from_data(
-        schedule=data["schedule"],
-        events=data["events"],
-        parking=data["parking"],
+    return run_simulation_from_dataset(
+        data,
         scenario=scenario,
         include_events=include_events,
         full_grid=full_grid,
     )
 
-# WHAT-IF
-
-def make_what_if_schedule(
-    schedule: List[dict],
-    day_of_week: str,
-    shift: str,
-    building: Optional[str] = None,
-    remove_class_ids: Optional[Iterable[str]] = None,
-    add_rows: Optional[List[dict]] = None,
-) -> List[dict]:
-    remove_ids = set(remove_class_ids or [])
-
-    def should_drop(row: dict) -> bool:
-        if row["day_of_week"] != day_of_week:
-            return False
-        if row["shift"] != shift:
-            return False
-        if building is not None and row["building"] != building:
-            return False
-        return row["class_id"] in remove_ids
-
-    new_schedule = [dict(row) for row in schedule if not should_drop(row)]
-
-    if add_rows:
-        new_schedule.extend(dict(row) for row in add_rows)
-
-    return new_schedule
-
-
-def move_classes(
-    schedule: List[dict],
-    from_day: str,
-    to_day: str,
-    shift: Optional[str] = None,
-    building: Optional[str] = None,
-    n_classes: int = 1,
-    seed: int = 42,
-) -> Tuple[List[dict], List[str]]:
-
-    if to_day not in DAY_ORDER:
-        raise ValueError(f"to_day khong hop le: {to_day}")
-
-    candidates = [
-        row for row in schedule
-        if row["day_of_week"] == from_day
-        and (shift is None or row["shift"] == shift)
-        and (building is None or row["building"] == building)
-    ]
-
-    # Uu tien chuyen lop dong nhat -> giam tai nhanh nhat, va deterministic
-    candidates.sort(
-        key=lambda r: (
-            -float(r["num_students"]) * float(r["motorbike_ratio"]),
-            r["schedule_id"],
-        )
-    )
-    chosen = {row["schedule_id"] for row in candidates[:n_classes]}
-
-    day_vn_map = {
-        "Mon": "Thu 2", "Tue": "Thu 3", "Wed": "Thu 4", "Thu": "Thu 5",
-        "Fri": "Thu 6", "Sat": "Thu 7", "Sun": "Chu nhat",
-    }
-
-    new_schedule = []
-    for row in schedule:
-        new_row = dict(row)
-        if new_row["schedule_id"] in chosen:
-            new_row["day_of_week"] = to_day
-            new_row["day_vn"] = day_vn_map.get(to_day, to_day)
-        new_schedule.append(new_row)
-
-    return new_schedule, sorted(chosen)
-
-
-def run_scenarios(
-    schedules: Dict[str, List[dict]],
-    events: List[dict],
-    parking: List[dict],
-    scenario: str = "Normal",
-    include_events: bool = True,
-) -> Dict[str, List[dict]]:
-    return {
-        name: run_simulation_from_data(sched, events, parking, scenario, include_events)
-        for name, sched in schedules.items()
-    }
-
 
 def compare_before_after(
+    data: Dict[str, List[dict]],
     schedule_before: List[dict],
     schedule_after: List[dict],
-    events: List[dict],
-    parking: List[dict],
     scenario: str = "Normal",
     include_events: bool = True,
 ) -> Tuple[List[dict], List[dict]]:
-    results = run_scenarios(
-        {"before": schedule_before, "after": schedule_after},
-        events, parking, scenario, include_events,
+    return (
+        simulate_schedule(data, schedule_before, scenario, include_events),
+        simulate_schedule(data, schedule_after, scenario, include_events),
     )
-    return results["before"], results["after"]
 
-# SORT
+
+def get_top_contributors(
+    contributors: Dict[Tuple[str, str, str, str], List[Tuple[str, float]]],
+    day: str,
+    slot: str,
+    lot_id: str,
+    direction: str,
+    top_n: int = 10,
+) -> List[Tuple[str, float]]:
+    items = contributors.get((day, slot, lot_id, direction.lower()), [])
+    aggregated: Dict[str, float] = defaultdict(float)
+    for source_id, flow in items:
+        aggregated[source_id] += flow
+    return sorted(aggregated.items(), key=lambda item: (-item[1], item[0]))[:top_n]
+
 
 def _sort_key(row: dict):
     day_idx = DAY_ORDER.index(row["day"]) if row["day"] in DAY_ORDER else 99
-    slot_idx = SLOT_ORDER.index(row["slot"]) if row["slot"] in SLOT_ORDER else 99
+    slot_idx = SLOT_ORDER.index(row["shift"]) if row["shift"] in SLOT_ORDER else 99
     lot_idx = PARKING_LOTS.index(row["lot_id"]) if row["lot_id"] in PARKING_LOTS else 99
     return (day_idx, slot_idx, lot_idx)
 
-# OUTPUT
 
-COLUMN_HEADERS = [
-    "Day",
-    "Shift",
-    "Parking Lot",
-    "Incoming",
-    "Outgoing",
-    "Checkin Throughput",
-    "Checkout Throughput",
-    "Checkin Util",
-    "Checkout Util",
-    "Worst Util",
-    "Bottleneck Direction",
-    "Status",
-]
-
-COLUMN_ALIGN = ["<", "<", "<", ">", ">", ">", ">", ">", ">", ">", "<", "<"]
-
-
-def format_shift(result: dict) -> str:
-    slot = result["slot"]
-    label = SLOT_LABELS.get(slot, slot)
-    window = result.get("slot_window")
-    if window:
-        return f"{slot} {label} ({window[0]}-{window[1]})"
-    return f"{slot} {label}"
+def get_slot_windows(schedule: List[dict]) -> Dict[str, Tuple[str, str]]:
+    _, bounds = build_window_slot_map(schedule)
+    return bounds
 
 
 def format_percent(value: float) -> str:
-    if value == float("inf"):
-        return "INF"
-    return f"{value * 100:.0f}%"
+    return "INF" if value == float("inf") else f"{value * 100:.0f}%"
 
 
-def result_to_row(result: dict) -> List[str]:
-    return [
-        result["day"],
-        format_shift(result),
-        result["lot_id"],
-        str(round(result["incoming"])),
-        str(round(result["outgoing"])),
-        str(result["checkin_capacity"]),
-        str(result["checkout_capacity"]),
-        format_percent(result["checkin_util"]),
-        format_percent(result["checkout_util"]),
-        format_percent(result["worst_util"]),
-        result["bottleneck_direction"],
-        result["status"],
-    ]
+def print_report(results: List[dict], scenario: str, schedule: Optional[List[dict]] = None) -> None:
+    if schedule:
+        bounds = get_slot_windows(schedule)
+        print("Khung giao ca:")
+        for slot in SLOT_ORDER:
+            if slot in bounds:
+                print(f"  {slot}: {SLOT_LABELS[slot]} ({bounds[slot][0]}-{bounds[slot][1]})")
 
-
-def render_table(headers: List[str], rows: List[List[str]]) -> List[str]:
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for i in range(len(headers)):
-            widths[i] = max(widths[i], len(row[i]))
-
-    def fmt_row(cells):
-        return " | ".join(
-            f"{cell:{COLUMN_ALIGN[i]}{widths[i]}}"
-            for i, cell in enumerate(cells)
+    print(f"Scenario: {scenario}")
+    header = (
+        "Day | Slot | Lot | Incoming | Outgoing | Checkin TP | Checkout TP | "
+        "Checkin Util | Checkout Util | Worst | Direction | Status"
+    )
+    print(header)
+    print("-" * len(header))
+    for row in results:
+        print(
+            f"{row['day']:3} | {row['shift']:4} | {row['lot_id']:3} | "
+            f"{row['incoming']:8.1f} | {row['outgoing']:8.1f} | "
+            f"{row['checkin_capacity']:10} | {row['checkout_capacity']:11} | "
+            f"{format_percent(row['checkin_util']):>12} | "
+            f"{format_percent(row['checkout_util']):>13} | "
+            f"{format_percent(row['worst_util']):>5} | "
+            f"{row['bottleneck_direction']:9} | {row['status']}"
         )
 
-    lines = [fmt_row(headers), "-+-".join("-" * w for w in widths)]
-    lines.extend(fmt_row(row) for row in rows)
-    return lines
+
+def save_csv(results: List[dict], out_path: Path, scenario: str) -> None:
+    fieldnames = [
+        "scenario", "day", "shift", "lot_id", "incoming", "outgoing",
+        "parking_capacity", "checkin_capacity", "checkout_capacity",
+        "checkin_util", "checkout_util", "worst_util",
+        "bottleneck_direction", "status",
+    ]
+    with Path(out_path).open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in results:
+            writer.writerow({"scenario": scenario, **row})
 
 
-def print_report(results: List[dict], scenario: str, title: str = "Output") -> None:
-    print(title)
-    print(f"(Scenario: {scenario})")
-    rows = [result_to_row(result) for result in results]
-    for line in render_table(COLUMN_HEADERS, rows):
-        print(line)
-
-    n_bottleneck = sum(1 for r in results if r["status"] == "BOTTLENECK")
-    n_peak = sum(1 for r in results if r["status"] == "PEAK")
-    print(
-        f"Tong: {len(results)} dong | "
-        f"BOTTLENECK: {n_bottleneck} | PEAK: {n_peak} | "
-        f"OK: {len(results) - n_bottleneck - n_peak}"
-    )
-
-
-def save_csv(rows: List[dict], out_path: Path) -> None:
-    """rows: list ket qua da gan them khoa 'scenario'."""
-    with out_path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Kịch bản"] + COLUMN_HEADERS)
-        for result in rows:
-            writer.writerow([result["scenario"]] + result_to_row(result))
-
-# CLI
-
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Digital Twin Lite - Parking Lot Vehicle Flow Simulation"
+        description="Digital Twin Lite - student/visit-based parking flow simulation"
     )
-    parser.add_argument(
-        "--scenario", choices=["Normal", "Worst", "Both"], default="Both",
-        help="Kich ban van hanh nha xe (mac dinh: Both)",
-    )
-    parser.add_argument("--no-events", action="store_true", help="Bo qua events.csv")
-    parser.add_argument("--dataset-dir", type=str, default=str(DATASET_DIR))
-    parser.add_argument("--out", type=str, default=None, help="File CSV de luu ket qua")
-    parser.add_argument("--only-bottleneck", action="store_true",
-                        help="Chi in cac dong PEAK/BOTTLENECK")
-    parser.add_argument("--full-grid", action="store_true",
-                        help="In du 5 khung x 4 bai cho moi ngay, ke ca khi luong = 0")
-
-    # What-if: chuyen lop tu ngay nay sang ngay khac
-    parser.add_argument("--move-from", type=str, default=None)
-    parser.add_argument("--move-to", type=str, default=None)
-    parser.add_argument("--move-shift", type=str, default=None,
-                        choices=SHIFT_ORDER)
-    parser.add_argument("--move-building", type=str, default=None,
-                        choices=BUILDINGS)
-    parser.add_argument("--move-n", type=int, default=0,
-                        help="So lop can chuyen")
-
+    parser.add_argument("--scenario", choices=["Normal", "Worst", "Both"], default="Normal")
+    parser.add_argument("--include-events", action="store_true")
+    parser.add_argument("--full-grid", action="store_true")
+    parser.add_argument("--only-alerts", action="store_true", help="Chi in PEAK/BOTTLENECK")
+    parser.add_argument("--explain", action="store_true", help="In top contributor cua cac diem canh bao")
+    parser.add_argument("--top-n", type=int, default=5)
+    parser.add_argument("--dataset-dir", default=str(DATASET_DIR))
+    parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
-    dataset_dir = Path(args.dataset_dir)
-    data = load_dataset(dataset_dir)
-    validate_dataset(data)
-
+    data = load_dataset(Path(args.dataset_dir))
     scenarios = ["Normal", "Worst"] if args.scenario == "Both" else [args.scenario]
-    include_events = not args.no_events
-
-    do_whatif = bool(args.move_from and args.move_to and args.move_n > 0)
-
-    all_results: List[dict] = []
+    all_rows = []
 
     for scenario in scenarios:
-        before = run_simulation_from_data(
-            data["schedule"], data["events"], data["parking"],
-            scenario, include_events, args.full_grid,
+        results, contributors = run_simulation_with_contributors(
+            data,
+            scenario=scenario,
+            include_events=args.include_events,
+            full_grid=args.full_grid,
         )
-
         shown = (
-            [r for r in before if r["status"] in ("PEAK", "BOTTLENECK")]
-            if args.only_bottleneck else before
+            [row for row in results if row["status"] in ("PEAK", "BOTTLENECK")]
+            if args.only_alerts else results
         )
-        print_report(shown, scenario, "Output" if not do_whatif else "Output - BEFORE")
+        print_report(shown, scenario, data["schedule"])
+
+        if args.explain:
+            for row in shown:
+                direction = row["bottleneck_direction"]
+                directions = ["checkin", "checkout"] if direction == "Both" else [direction.lower()]
+                for flow_direction in directions:
+                    print(
+                        f"\nContributors {row['day']} {row['shift']} {row['lot_id']} "
+                        f"{flow_direction}:"
+                    )
+                    for source_id, flow in get_top_contributors(
+                        contributors,
+                        row["day"], row["shift"], row["lot_id"], flow_direction, args.top_n,
+                    ):
+                        print(f"  {source_id}: {flow:.1f} xe")
+        all_rows.extend({"scenario": scenario, **row} for row in shown)
         print()
 
-        all_results.extend({**r, "scenario": scenario} for r in shown)
-
-        if do_whatif:
-            new_schedule, moved = move_classes(
-                data["schedule"],
-                from_day=args.move_from,
-                to_day=args.move_to,
-                shift=args.move_shift,
-                building=args.move_building,
-                n_classes=args.move_n,
-            )
-            after = run_simulation_from_data(
-                new_schedule, data["events"], data["parking"],
-                scenario, include_events, args.full_grid,
-            )
-            shown_after = (
-                [r for r in after if r["status"] in ("PEAK", "BOTTLENECK")]
-                if args.only_bottleneck else after
-            )
-            print(f"Da chuyen {len(moved)} lop tu {args.move_from} sang {args.move_to}.")
-            print_report(shown_after, scenario, "Output - AFTER")
-            print()
-
-            all_results.extend(
-                {**r, "scenario": f"{scenario} (after)"} for r in shown_after
-            )
-
     if args.out:
+        # When Both is requested, write directly with all scenario-tagged rows.
         out_path = Path(args.out)
-        save_csv(all_results, out_path)
-        print(f"Da luu ket qua vao: {out_path}")
+        fieldnames = list(all_rows[0].keys()) if all_rows else []
+        with out_path.open("w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(all_rows)
+        print(f"Da luu: {out_path}")
 
 
 if __name__ == "__main__":

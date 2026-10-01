@@ -3,22 +3,33 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Digital Twin Lite - NEU Campus Dashboard</title>
+<title>NEU Digital Twin Lite - Analytics &amp; Optimization</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  body { background-color: #0a0f18; font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { background-color: #0b111e; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-thumb { background: #1f293d; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+  .pulse-border-red {
+    box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.95), 0 0 12px rgba(244, 63, 94, 0.5);
+  }
+  .pulse-border-green {
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.95), 0 0 12px rgba(16, 185, 129, 0.5);
+  }
 </style>
 </head>
-<body class="text-slate-100 min-h-screen p-4 md:p-6 lg:p-8">
+<body class="text-slate-100 min-h-screen p-3 md:p-6 lg:p-8">
 
-  <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-6 border-b border-slate-800 mb-6 gap-4">
+  <!-- HEADER -->
+  <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center pb-5 border-b border-slate-800 mb-6 gap-4">
     <div>
-      <h1 class="text-xl md:text-2xl font-bold text-white">NEU Digital Twin - Parking &amp; Schedule Analytics</h1>
-      <p class="text-xs text-slate-400 mt-0.5">Hệ thống giám sát tải trọng lịch học và bãi xe sinh viên ĐH Kinh tế Quốc dân</p>
+      <div class="flex items-center gap-2.5">
+        <span class="inline-block w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_10px_#22d3ee]"></span>
+        <h1 class="text-xl md:text-2xl font-bold tracking-tight text-white">NEU Digital Twin - Parking &amp; Schedule Analytics</h1>
+      </div>
+      <p class="text-xs text-slate-400 mt-1">Hệ thống giám sát tải trọng lịch học và năng lực thông hành 4 bãi xe sinh viên ĐH Kinh tế Quốc dân</p>
     </div>
-    <div class="flex flex-wrap items-center gap-3">
+
+    <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
       <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs">
         <span class="text-slate-400">Kịch bản:</span>
         <select id="scenario-selector" onchange="fetchDashboardData()" class="bg-transparent text-cyan-400 font-bold outline-none cursor-pointer">
@@ -26,302 +37,593 @@
           <option value="Worst">Worst (Mưa / Cổng bảo trì)</option>
         </select>
       </div>
+
       <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs">
         <span class="text-slate-400">Sự kiện:</span>
         <select id="events-selector" onchange="fetchDashboardData()" class="bg-transparent text-purple-400 font-bold outline-none cursor-pointer">
-          <option value="true">Có tính sự kiện (events.csv)</option>
+          <option value="true">Có tính sự kiện (Thi GK)</option>
           <option value="false">Không tính sự kiện</option>
         </select>
       </div>
-      <button onclick="fetchDashboardData()" class="px-3 py-1.5 text-xs font-semibold bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 rounded-lg border border-cyan-500/30">
+
+      <button onclick="openDataEditorModal()" class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-lg border border-amber-500/40 transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+        EDIT INPUT DATA
+      </button>
+
+      <button onclick="fetchDashboardData()" class="px-3.5 py-1.5 text-xs font-semibold bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 rounded-lg border border-cyan-500/30 transition">
         Làm mới
       </button>
     </div>
   </header>
 
-  <div id="api-error" class="hidden mb-6 p-4 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-sm">
-    Không kết nối được API (<code>/api/dashboard</code>). Hãy chạy <code>python3 serve_dashboard.py</code>
-    trong thư mục dự án rồi mở lại trang này qua <code>http://localhost:8080</code> (không mở trực tiếp file HTML).
-  </div>
+  <!-- NOTIFICATION -->
+  <div id="api-error" class="hidden mb-6 p-4 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-xs"></div>
 
-  <section id="kpi-section" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs font-semibold uppercase">Total Sessions</div>
+  <!-- KPI SUMMARY -->
+  <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 mb-6">
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider">Total Sessions</div>
       <div class="mt-2 text-2xl font-extrabold text-white" id="kpi-sessions">-</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs font-semibold uppercase">Total Students</div>
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider">Total Students</div>
       <div class="mt-2 text-2xl font-extrabold text-cyan-400" id="kpi-students">-</div>
     </div>
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-      <div class="text-slate-400 text-xs font-semibold uppercase">Peak Demand</div>
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider">Peak Demand</div>
       <div class="mt-2 text-2xl font-extrabold text-amber-400" id="kpi-peak-demand">-</div>
       <div class="text-[11px] text-slate-500 mt-1" id="kpi-peak-demand-sub">-</div>
     </div>
-    <div class="bg-slate-900 border border-rose-900/40 rounded-xl p-4">
-      <div class="text-slate-400 text-xs font-semibold uppercase">Worst Parking</div>
+    <div class="bg-slate-900/90 border border-rose-900/40 rounded-xl p-4">
+      <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider">Worst Parking</div>
       <div class="mt-2 flex items-baseline justify-between">
-        <div class="text-2xl font-extrabold text-rose-500" id="kpi-worst-parking">-</div>
-        <span class="text-xs px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 text-rose-400 font-bold" id="kpi-worst-rate">-</span>
+        <div class="text-2xl font-extrabold text-rose-400" id="kpi-worst-parking">-</div>
+        <span class="text-xs px-2 py-0.5 rounded bg-rose-950 text-rose-300 font-bold border border-rose-800" id="kpi-worst-rate">-</span>
       </div>
-      <div class="text-[11px] text-rose-400/80 mt-1" id="kpi-worst-parking-sub">-</div>
+      <div class="text-[11px] text-rose-400/80 mt-1 truncate" id="kpi-worst-parking-sub">-</div>
     </div>
-    <div class="bg-slate-900 border border-amber-900/40 rounded-xl p-4">
-      <div class="text-slate-400 text-xs font-semibold uppercase">Worst Time Window</div>
-      <div class="mt-2 text-xl font-extrabold text-amber-300" id="kpi-worst-time">-</div>
-      <div class="text-[11px] text-slate-500 mt-1" id="kpi-worst-time-sub">-</div>
+    <div class="bg-slate-900/90 border border-emerald-900/40 rounded-xl p-4">
+      <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider">Optimization Status</div>
+      <div class="mt-2 text-xl font-bold text-emerald-400" id="kpi-opt-status">Chưa chạy</div>
+      <div class="text-[11px] text-slate-500 mt-1" id="kpi-opt-sub">Sẵn sàng tối ưu multi-move</div>
     </div>
   </section>
 
-  <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-    <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-5">
-      <div class="flex justify-between items-center pb-4 mb-4 border-b border-slate-800">
-        <div>
-          <h2 class="text-base font-bold text-white">Schedule Heatmap</h2>
-          <p class="text-xs text-slate-400 mt-0.5">Tổng SV có mặt trên giảng đường theo Ca học và Thứ (từ schedule.csv)</p>
-        </div>
-        <span id="active-schedule-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-950 text-cyan-300 border border-cyan-800/60">
-          Hiện trạng (BEFORE)
-        </span>
+  <!-- BEFORE & AFTER HEATMAP CÙNG MÀN HÌNH (Yêu cầu B) -->
+  <section class="bg-slate-900/90 border border-slate-800 rounded-xl p-5 mb-6">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 mb-4 border-b border-slate-800 gap-3">
+      <div>
+        <h2 class="text-base font-bold text-white flex items-center gap-2">
+          Schedule Heatmap Comparison (BEFORE vs. AFTER)
+        </h2>
+        <p class="text-xs text-slate-400 mt-0.5">
+          So sánh trực quan mật độ sinh viên trước và sau khi tối ưu trên cùng dải màu. <span class="text-slate-500">Màu ô = số SV, không phải trạng thái bottleneck bãi xe.</span> 
+          <span class="text-rose-400 font-bold ml-1">[OUT: Ô nguồn dời đi]</span> 
+          <span class="text-emerald-400 font-bold ml-1">[IN: Ô đích chuyển tới]</span>
+        </p>
       </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-center border-collapse">
-          <thead>
-            <tr class="text-xs font-semibold text-slate-400 border-b border-slate-800">
-              <th class="py-3 px-3 text-left w-24">Ca học</th>
-              <th class="py-3 px-2">Mon</th><th class="py-3 px-2">Tue</th><th class="py-3 px-2">Wed</th>
-              <th class="py-3 px-2">Thu</th><th class="py-3 px-2">Fri</th><th class="py-3 px-2">Sat</th>
-            </tr>
-          </thead>
-          <tbody id="heatmap-body"></tbody>
-        </table>
-      </div>
-    </div>
 
-    <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col">
-      <h2 class="text-base font-bold text-white pb-3 border-b border-slate-800 mb-3">Optimization &amp; Recommendation</h2>
-      <p class="text-xs text-slate-400 mb-3">
-        Gọi trực tiếp optimizer thật (<code>optimize_multi_move</code>) trên dataset hiện tại - không phải số minh hoạ.
-        Lần chạy đầu mất khoảng 10-15 giây.
-      </p>
-      <div class="flex items-center gap-2 mb-3">
-        <label class="text-xs text-slate-400">Số move tối đa:</label>
-        <input id="max-moves-input" type="number" value="3" min="1" max="10" class="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
-        <button id="btn-run-optimize" onclick="runOptimization()" class="ml-auto px-3 py-1.5 text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-lg">
+      <div class="flex items-center gap-2.5">
+        <div class="flex items-center gap-1.5 text-xs text-slate-400">
+          <span>Max moves:</span>
+          <input id="max-moves-input" type="number" value="3" min="1" max="50" class="w-14 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white text-center font-bold">
+        </div>
+        <button id="btn-run-optimize" onclick="runOptimization()" class="px-4 py-2 text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-lg shadow-lg shadow-cyan-500/20 transition">
           Chạy tối ưu
         </button>
       </div>
-      <div id="optimize-status" class="text-xs text-slate-500 mb-3"></div>
-      <div id="optimize-result" class="hidden">
-        <table class="w-full text-xs mb-3">
-          <thead>
-            <tr class="text-slate-400 border-b border-slate-800 text-left">
-              <th class="py-1">Chỉ số</th><th class="py-1 text-center">BEFORE</th><th class="py-1 text-center text-cyan-400">AFTER</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800/60" id="optimize-metrics-body"></tbody>
-        </table>
-        <div class="text-[11px] font-bold text-slate-300 uppercase mb-2">Danh sách move đã áp dụng</div>
-        <div id="optimize-moves-list" class="space-y-1.5 mb-3 max-h-40 overflow-y-auto"></div>
-        <button id="btn-toggle-opt" onclick="toggleOptimizationView()" class="w-full py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500 text-xs font-extrabold">
-          XEM KẾT QUẢ SAU TỐI ƯU (AFTER)
+    </div>
+
+    <!-- SIDE-BY-SIDE HEATMAPS -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <!-- BEFORE -->
+      <div class="bg-slate-950/60 rounded-xl p-4 border border-slate-800">
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-cyan-400"></span> BEFORE (HIỆN TRẠNG)
+          </span>
+          <span class="text-[11px] text-slate-500 font-mono" id="before-bottleneck-count">Đang tải...</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-center border-collapse text-xs">
+            <thead>
+              <tr class="text-slate-400 border-b border-slate-800">
+                <th class="py-2.5 px-2 text-left font-semibold">Ca học</th>
+                <th class="py-2 px-1">Mon</th><th class="py-2 px-1">Tue</th><th class="py-2 px-1">Wed</th>
+                <th class="py-2 px-1">Thu</th><th class="py-2 px-1">Fri</th><th class="py-2 px-1">Sat</th>
+              </tr>
+            </thead>
+            <tbody id="heatmap-body-before"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="bg-slate-950/60 rounded-xl p-4 border border-slate-800">
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span> AFTER (SAU TỐI ƯU)
+          </span>
+          <span class="text-[11px] text-slate-500 font-mono" id="after-bottleneck-count">Chưa chạy tối ưu</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-center border-collapse text-xs">
+            <thead>
+              <tr class="text-slate-400 border-b border-slate-800">
+                <th class="py-2.5 px-2 text-left font-semibold">Ca học</th>
+                <th class="py-2 px-1">Mon</th><th class="py-2 px-1">Tue</th><th class="py-2 px-1">Wed</th>
+                <th class="py-2 px-1">Thu</th><th class="py-2 px-1">Fri</th><th class="py-2 px-1">Sat</th>
+              </tr>
+            </thead>
+            <tbody id="heatmap-body-after"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHI TIẾT MOVE CỦA OPTIMIZER (Yêu cầu C) -->
+    <div id="moves-container" class="mt-5 pt-5 border-t border-slate-800 hidden">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+          <span>Danh sách MOVE đã áp dụng</span>
+          <span id="moves-applied-badge" class="px-2 py-0.5 rounded-full text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800">0 Moves</span>
+        </h3>
+        <span class="text-[11px] text-slate-400" id="moves-stop-reason"></span>
+      </div>
+      <div id="moves-cards-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5"></div>
+    </div>
+  </section>
+
+  <!-- BẢNG PARKING VIEW HỢP NHẤT SO SÁNH (Yêu cầu B) -->
+  <section class="bg-slate-900/90 border border-slate-800 rounded-xl p-5 mb-8">
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center pb-4 mb-4 border-b border-slate-800 gap-3">
+      <div>
+        <h2 class="text-base font-bold text-white">Parking Utilization Comparison (P1 - P4)</h2>
+        <p class="text-xs text-slate-400 mt-0.5">Một bảng hợp nhất Before, After, và độ lệch Δ Util trên cùng bộ lọc</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <select id="filter-day" onchange="renderUnifiedParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none">
+          <option value="ALL">Tất cả các Thứ</option>
+          <option value="Mon">Mon (Thứ 2)</option><option value="Tue">Tue (Thứ 3)</option>
+          <option value="Wed">Wed (Thứ 4)</option><option value="Thu">Thu (Thứ 5)</option>
+          <option value="Fri">Fri (Thứ 6)</option><option value="Sat">Sat (Thứ 7)</option>
+        </select>
+        <select id="filter-slot" onchange="renderUnifiedParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none">
+          <option value="ALL">Tất cả khung giờ giao ca</option>
+        </select>
+        <select id="filter-lot" onchange="renderUnifiedParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none">
+          <option value="ALL">Tất cả bãi xe</option>
+          <option value="P1">P1</option><option value="P2">P2</option>
+          <option value="P3">P3</option><option value="P4">P4</option>
+        </select>
+        <button onclick="resetFilters()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">
+          Xóa lọc
         </button>
       </div>
     </div>
-  </div>
 
-  <section class="bg-slate-900 border border-slate-800 rounded-xl p-5">
-    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center pb-4 mb-4 border-b border-slate-800 gap-3">
-      <h2 class="text-base font-bold text-white">Parking View (P1 - P4)</h2>
-      <div class="flex flex-wrap items-center gap-2 text-xs">
-        <select id="filter-day" onchange="renderParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
-          <option value="ALL">Tất cả ngày</option>
-          <option value="Mon">Mon</option><option value="Tue">Tue</option><option value="Wed">Wed</option>
-          <option value="Thu">Thu</option><option value="Fri">Fri</option><option value="Sat">Sat</option>
-        </select>
-        <select id="filter-slot" onchange="renderParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
-          <option value="ALL">Tất cả khung giờ</option>
-        </select>
-        <select id="filter-lot" onchange="renderParkingTable()" class="bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200">
-          <option value="ALL">Tất cả nhà xe</option>
-          <option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option><option value="P4">P4</option>
-        </select>
-        <button onclick="resetFilters()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700">Xóa lọc</button>
-      </div>
-    </div>
-    <div class="text-[11px] text-slate-500 mb-2" id="table-record-count"></div>
+    <div class="text-[11px] text-slate-500 mb-2 flex justify-between items-center" id="table-record-count"></div>
+
     <div class="overflow-x-auto">
-      <table class="w-full text-xs text-center">
+      <table class="w-full text-xs text-center border-collapse">
         <thead>
-          <tr class="text-slate-400 border-b border-slate-800">
-            <th class="py-2 px-2 text-left">Ngày</th>
-            <th class="py-2 px-2 text-left">Khung giờ</th>
-            <th class="py-2 px-2">Bãi xe</th>
-            <th class="py-2 px-2 text-right">Vào (xe)</th>
-            <th class="py-2 px-2 text-right">Ra (xe)</th>
-            <th class="py-2 px-2 text-right">Check-in cap.</th>
-            <th class="py-2 px-2 text-right">Check-out cap.</th>
-            <th class="py-2 px-2 w-40">Worst Util</th>
-            <th class="py-2 px-2">Trạng thái</th>
+          <tr class="text-slate-400 border-b border-slate-800 bg-slate-950/40">
+            <th class="py-2.5 px-3 text-left">Day</th>
+            <th class="py-2.5 px-3 text-left">Slot</th>
+            <th class="py-2.5 px-2">Lot</th>
+            <th class="py-2.5 px-2 text-right">Before Util</th>
+            <th class="py-2.5 px-2 text-right">After Util</th>
+            <th class="py-2.5 px-3 text-right font-bold">Δ Util</th>
+            <th class="py-2.5 px-2">Before Status</th>
+            <th class="py-2.5 px-2">After Status</th>
           </tr>
         </thead>
-        <tbody id="parking-table-body"></tbody>
+        <tbody id="unified-parking-table-body" class="divide-y divide-slate-800/40"></tbody>
       </table>
     </div>
   </section>
 
+  <!-- MODAL: DATA EDITOR (Yêu cầu A) -->
+  <div id="data-editor-modal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 hidden">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+          <h3 class="text-base font-bold text-white">Data Editor — Simulation Inputs</h3>
+        </div>
+        <button onclick="closeDataEditorModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <!-- Tab Buttons -->
+      <div class="flex border-b border-slate-800 bg-slate-950/40 px-6 gap-2 text-xs">
+        <button id="tab-btn-schedule" onclick="switchEditorTab('schedule')" class="py-3 px-4 font-bold border-b-2 border-cyan-400 text-cyan-400">1. Schedule</button>
+        <button id="tab-btn-event" onclick="switchEditorTab('event')" class="py-3 px-4 font-semibold text-slate-400 hover:text-slate-200">2. Event</button>
+        <button id="tab-btn-parking" onclick="switchEditorTab('parking')" class="py-3 px-4 font-semibold text-slate-400 hover:text-slate-200">3. Parking</button>
+        <button id="tab-btn-behavior" onclick="switchEditorTab('behavior')" class="py-3 px-4 font-semibold text-slate-400 hover:text-slate-200">4. Student Behavior</button>
+      </div>
+
+      <!-- Tab Contents -->
+      <div class="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+
+        <!-- TAB 1: SCHEDULE (API check phòng trống + đủ sức chứa) -->
+        <div id="tab-panel-schedule" class="space-y-4">
+          <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+            <h4 class="text-sm font-bold text-white mb-2">Thêm buổi học mới (Add Schedule)</h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              <div>
+                <label class="block text-slate-400 mb-1">Class</label>
+                <select id="form-sched-class" onchange="fetchAvailableRoomsFromBackend()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="LHP0121" data-students="80">LHP0121 (80 SV)</option>
+                  <option value="LHP0002" data-students="66">LHP0002 (66 SV)</option>
+                  <option value="LHP0004" data-students="76">LHP0004 (76 SV)</option>
+                  <option value="LHP0020" data-students="78">LHP0020 (78 SV)</option>
+                  <option value="LHP0039" data-students="80">LHP0039 (80 SV)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1">Day</label>
+                <select id="form-sched-day" onchange="fetchAvailableRoomsFromBackend()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="Mon">Mon (Thứ 2)</option><option value="Tue" selected>Tue (Thứ 3)</option>
+                  <option value="Wed">Wed (Thứ 4)</option><option value="Thu">Thu (Thứ 5)</option>
+                  <option value="Fri">Fri (Thứ 6)</option><option value="Sat">Sat (Thứ 7)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1">Shift</label>
+                <select id="form-sched-shift" onchange="fetchAvailableRoomsFromBackend()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="Ca1">Ca 1</option><option value="Ca2">Ca 2</option>
+                  <option value="Ca3" selected>Ca 3</option><option value="Ca4">Ca 4</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1">Building</label>
+                <select id="form-sched-building" onchange="fetchAvailableRoomsFromBackend()" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="A2">A2</option><option value="B">B</option>
+                  <option value="C">C</option><option value="D">D</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1">Room (Đủ capacity + Đang trống)</label>
+                <select id="form-sched-room" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none font-mono"></select>
+              </div>
+
+              <div class="flex items-end gap-2">
+                <button type="button" onclick="validateScheduleForm()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold py-2 rounded-lg border border-cyan-800 transition">
+                  Validate
+                </button>
+                <button type="button" onclick="submitScheduleAddAPI()" class="flex-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold py-2 rounded-lg transition">
+                  Add
+                </button>
+              </div>
+            </div>
+            <div id="schedule-form-msg" class="mt-2.5 text-[11px]"></div>
+          </div>
+        </div>
+
+        <!-- TAB 2: EVENT -->
+        <div id="tab-panel-event" class="space-y-4 hidden">
+          <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+            <h4 class="text-sm font-bold text-white mb-2">Thêm sự kiện phát sinh (Event)</h4>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              <div>
+                <label class="block text-slate-400 mb-1">Event name</label>
+                <input id="form-evt-name" type="text" value="Thi giua ky - Kinh te vi mo" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1">Day</label>
+                <select id="form-evt-day" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="Mon">Mon</option><option value="Tue">Tue</option><option value="Wed">Wed</option>
+                  <option value="Thu">Thu</option><option value="Fri">Fri</option><option value="Sat">Sat</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1">Shift</label>
+                <select id="form-evt-shift" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="Ca1">Ca 1</option><option value="Ca2" selected>Ca 2</option>
+                  <option value="Ca3">Ca 3</option><option value="Ca4">Ca 4</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1">Building</label>
+                <select id="form-evt-building" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+                  <option value="D" selected>Toà D</option><option value="A2">Toà A2</option>
+                  <option value="B">Toà B</option><option value="C">Toà C</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1">Students</label>
+                <input id="form-evt-students" type="number" value="75" min="1" max="500" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+              </div>
+              <div>
+                <label class="block text-slate-400 mb-1">Motorbike ratio</label>
+                <input id="form-evt-ratio" type="number" step="0.05" value="0.90" min="0" max="1" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none">
+              </div>
+            </div>
+            <div class="mt-4 flex justify-end">
+              <button onclick="submitEventAddAPI()" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg transition">
+                Lưu sự kiện
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: PARKING (Throughput tự tính) -->
+        <div id="tab-panel-parking" class="space-y-4 hidden">
+          <div class="text-[11px] text-slate-400 bg-cyan-950/30 border border-cyan-800/40 p-3 rounded-xl">
+            Throughput được tự động tính theo: <code class="text-cyan-300 font-mono">gates &times; 1800 / sec_per_vehicle</code> (xe / 30 phút).
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="parking-config-cards"></div>
+        </div>
+
+        <!-- TAB 4: STUDENT BEHAVIOR -->
+        <div id="tab-panel-behavior" class="space-y-4 hidden">
+          <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800 space-y-4">
+            <div>
+              <h4 class="text-sm font-bold text-white">Student Behavior Assumptions</h4>
+              <p class="text-slate-400 text-xs mt-1">Thay đổi assumption để Digital Twin chạy lại mô phỏng và xem ngay tác động dòng xe.</p>
+            </div>
+
+            <div class="space-y-3 pt-2">
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-300">Near — leave during 1 gap:</span>
+                  <span class="font-mono text-cyan-400 font-bold" id="label-near-gap">60%</span>
+                </div>
+                <input id="range-near-gap" type="range" min="0" max="100" value="60" oninput="document.getElementById('label-near-gap').innerText = this.value + '%'" class="w-full accent-cyan-400 cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-300">Far — leave during 1 gap:</span>
+                  <span class="font-mono text-amber-400 font-bold" id="label-far-gap">10%</span>
+                </div>
+                <input id="range-far-gap" type="range" min="0" max="100" value="10" oninput="document.getElementById('label-far-gap').innerText = this.value + '%'" class="w-full accent-amber-400 cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-300">Default Motorbike Ratio (Tỷ lệ xe máy chung):</span>
+                  <span class="font-mono text-emerald-400 font-bold" id="label-default-moto">85%</span>
+                </div>
+                <input id="range-default-moto" type="range" min="50" max="100" value="85" oninput="document.getElementById('label-default-moto').innerText = this.value + '%'" class="w-full accent-emerald-400 cursor-pointer">
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-800 flex justify-end">
+              <button onclick="submitBehaviorUpdateAPI()" class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg transition">
+                Áp dụng Assumption &amp; Chạy lại Mô phỏng
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="px-6 py-3 border-t border-slate-800 bg-slate-900/90 flex justify-between items-center text-xs">
+        <span class="text-slate-500">Mọi thay đổi gọi trực tiếp vào API Core Simulation backend.</span>
+        <button onclick="closeDataEditorModal()" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition">Đóng</button>
+      </div>
+    </div>
+  </div>
+
 <script>
-  let basePayload = null;       // tu /api/dashboard - LICH HIEN TAI
-  let optimizePayload = null;   // tu /api/optimize - null cho den khi bam "Chay toi uu"
-  let displayMode = 'base';     // 'base' | 'after'
+  let basePayload = null;
+  let optimizePayload = null;
 
-  function currentHeatmap() {
-    if (displayMode === 'after' && optimizePayload && optimizePayload.available) {
-      return optimizePayload.after.heatmap;
-    }
-    return basePayload ? basePayload.heatmap : null;
-  }
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const SHIFTS = ['Ca1', 'Ca2', 'Ca3', 'Ca4'];
 
-  function currentParkingView() {
-    if (displayMode === 'after' && optimizePayload && optimizePayload.available) {
-      return optimizePayload.after.parking_view;
-    }
-    return basePayload ? basePayload.parking_view : null;
-  }
+  let parkingConfigState = {
+    P1: { cap: 3000, in_gates: 2, in_sec: 3, out_gates: 2, out_sec: 10 },
+    P2: { cap: 3000, in_gates: 2, in_sec: 3, out_gates: 2, out_sec: 10 },
+    P3: { cap: 6000, in_gates: 2, in_sec: 3, out_gates: 2, out_sec: 10 },
+    P4: { cap: 3000, in_gates: 2, in_sec: 3, out_gates: 2, out_sec: 10 },
+  };
 
+  // 1. GỌI API DASHBOARD
   async function fetchDashboardData() {
     const scenario = document.getElementById('scenario-selector').value;
     const includeEvents = document.getElementById('events-selector').value;
-    document.getElementById('api-error').classList.add('hidden');
+    const errBox = document.getElementById('api-error');
+    errBox.classList.add('hidden');
 
-    // Clear stale optimization results when inputs change.
     optimizePayload = null;
-    displayMode = 'base';
-    document.getElementById('optimize-result').classList.add('hidden');
-    document.getElementById('optimize-status').innerText = '';
+    document.getElementById('moves-container').classList.add('hidden');
+    document.getElementById('kpi-opt-status').innerText = 'Chưa chạy';
+    document.getElementById('kpi-opt-sub').innerText = 'Sẵn sàng tối ưu multi-move';
+    document.getElementById('after-bottleneck-count').innerText = 'Chưa chạy tối ưu';
 
     try {
       const res = await fetch(`/api/dashboard?scenario=${scenario}&include_events=${includeEvents}`);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       basePayload = await res.json();
     } catch (err) {
-      document.getElementById('api-error').classList.remove('hidden');
-      basePayload = null;
+      errBox.classList.remove('hidden');
+      errBox.innerText = 'Lỗi kết nối API (/api/dashboard): ' + err.message;
       return;
     }
+
     populateSlotFilter(basePayload.slot_labels);
     renderAll();
-  }
-
-  function populateSlotFilter(slotLabels) {
-    const sel = document.getElementById('filter-slot');
-    const keep = sel.value;
-    sel.innerHTML = '<option value="ALL">Tất cả khung giờ</option>';
-    Object.keys(slotLabels).sort().forEach(slot => {
-      const opt = document.createElement('option');
-      opt.value = slot;
-      opt.innerText = `${slot} — ${slotLabels[slot]}`;
-      sel.appendChild(opt);
-    });
-    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
   }
 
   function renderAll() {
     if (!basePayload) return;
     renderKPIs();
-    renderHeatmap();
-    renderParkingTable();
+    renderSideBySideHeatmaps();
+    renderUnifiedParkingTable();
   }
 
   function renderKPIs() {
     document.getElementById('kpi-sessions').innerText = basePayload.kpi.total_sessions.toLocaleString('vi-VN');
     document.getElementById('kpi-students').innerText = basePayload.kpi.total_students.toLocaleString('vi-VN');
 
-    // Recalculate KPIs for the active view.
-    const heatmap = currentHeatmap();
+    const hm = basePayload.heatmap;
     let peakDay = null, peakShift = null, peakVal = -1;
-    for (const day in heatmap) {
-      for (const shift in heatmap[day]) {
-        if (heatmap[day][shift] > peakVal) { peakVal = heatmap[day][shift]; peakDay = day; peakShift = shift; }
+    for (const d of DAYS) {
+      for (const s of SHIFTS) {
+        if (hm[d] && hm[d][s] > peakVal) { peakVal = hm[d][s]; peakDay = d; peakShift = s; }
       }
     }
     document.getElementById('kpi-peak-demand').innerText = peakVal.toLocaleString('vi-VN') + ' SV';
-    document.getElementById('kpi-peak-demand-sub').innerText = `${peakDay} - ${peakShift}`;
+    document.getElementById('kpi-peak-demand-sub').innerText = `${peakDay} · ${peakShift}`;
 
-    const pv = currentParkingView();
+    const pv = basePayload.parking_view;
     const worst = pv.reduce((a, b) => (b.worst_utilization_pct > a.worst_utilization_pct ? b : a), pv[0]);
     document.getElementById('kpi-worst-parking').innerText = worst.parking_lot;
     document.getElementById('kpi-worst-rate').innerText = `${worst.worst_utilization_pct}%`;
-    document.getElementById('kpi-worst-parking-sub').innerText = `${worst.day} · ${worst.slot_label} · ${worst.bottleneck_direction}`;
-    document.getElementById('kpi-worst-time').innerText = `${worst.day}`;
-    document.getElementById('kpi-worst-time-sub').innerText = worst.slot_label;
+    document.getElementById('kpi-worst-parking-sub').innerText = `${worst.day} · ${worst.slot} · ${worst.bottleneck_direction}`;
+
+    const bCount = pv.filter(r => r.status === 'BOTTLENECK').length;
+    document.getElementById('before-bottleneck-count').innerText = `${bCount} điểm nghẽn (BOTTLENECK)`;
   }
 
-  function renderHeatmap() {
-    const heatmap = currentHeatmap();
-    const tbody = document.getElementById('heatmap-body');
+  // 2. SO SÁNH 2 HEATMAP BEFORE / AFTER (Yêu cầu B)
+  function renderSideBySideHeatmaps() {
+    const beforeHm = basePayload.heatmap;
+    const afterHm = (optimizePayload && optimizePayload.available) ? optimizePayload.after.heatmap : beforeHm;
+
+    let maxVal = 0;
+    DAYS.forEach(d => {
+      SHIFTS.forEach(s => {
+        maxVal = Math.max(maxVal, (beforeHm[d] && beforeHm[d][s]) || 0, (afterHm[d] && afterHm[d][s]) || 0);
+      });
+    });
+
+    const sourceCells = new Set();
+    const targetCells = new Set();
+    if (optimizePayload && optimizePayload.moves) {
+      optimizePayload.moves.forEach(m => {
+        sourceCells.add(`${m.from_day}-${m.from_shift}`);
+        targetCells.add(`${m.to_day}-${m.to_shift}`);
+      });
+    }
+
+    renderSingleHeatmap('heatmap-body-before', beforeHm, sourceCells, 'OUT');
+    renderSingleHeatmap('heatmap-body-after', afterHm, targetCells, 'IN');
+  }
+
+  function getHeatmapColorClass(val) {
+    if (val > 3500) return 'bg-rose-950/80 text-rose-300 font-bold border border-rose-800/60';
+    if (val > 2500) return 'bg-amber-950/70 text-amber-300 font-semibold border border-amber-800/40';
+    if (val > 1500) return 'bg-blue-900/50 text-blue-200 border border-blue-800/40';
+    if (val > 0) return 'bg-slate-800/60 text-slate-300 border border-slate-700/30';
+    return 'bg-slate-900/40 text-slate-600 border border-slate-800/40';
+  }
+
+  function renderSingleHeatmap(tbodyId, hm, highlightCells, highlightType) {
+    const tbody = document.getElementById(tbodyId);
     tbody.innerHTML = '';
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    ['Ca1', 'Ca2', 'Ca3', 'Ca4'].forEach(shift => {
+
+    SHIFTS.forEach(shift => {
       const tr = document.createElement('tr');
-      tr.className = 'border-b border-slate-800/50';
+      tr.className = 'border-b border-slate-800/40';
+
       const th = document.createElement('td');
-      th.className = 'py-3 px-3 text-left font-bold text-white';
+      th.className = 'py-2 px-2 text-left font-bold text-slate-300';
       th.innerText = shift;
       tr.appendChild(th);
-      days.forEach(day => {
+
+      DAYS.forEach(day => {
         const td = document.createElement('td');
-        const val = (heatmap[day] && heatmap[day][shift]) || 0;
-        let color = 'bg-slate-800/70 text-slate-400';
-        if (val > 3500) color = 'bg-rose-950/80 text-rose-300 font-bold';
-        else if (val > 2500) color = 'bg-amber-950/70 text-amber-300 font-semibold';
-        else if (val > 1500) color = 'bg-blue-900/60 text-blue-200';
-        td.innerHTML = `<div class="p-2 m-0.5 rounded-lg ${color}">${val.toLocaleString('vi-VN')}</div>`;
+        const val = (hm[day] && hm[day][shift]) || 0;
+        const colorClass = getHeatmapColorClass(val);
+        const cellKey = `${day}-${shift}`;
+
+        let borderClass = '';
+        let tagHtml = '';
+
+        if (highlightCells && highlightCells.has(cellKey)) {
+          if (highlightType === 'OUT') {
+            borderClass = 'pulse-border-red';
+            tagHtml = `<span class="absolute -top-1 -right-1 text-[9px] px-1 bg-rose-600 text-white font-black rounded">OUT</span>`;
+          } else {
+            borderClass = 'pulse-border-green';
+            tagHtml = `<span class="absolute -top-1 -right-1 text-[9px] px-1 bg-emerald-600 text-white font-black rounded">IN</span>`;
+          }
+        }
+
+        td.innerHTML = `
+          <div class="relative p-2 m-0.5 rounded-lg ${colorClass} ${borderClass} transition-all duration-300">
+            ${tagHtml}
+            <div>${val.toLocaleString('vi-VN')}</div>
+          </div>
+        `;
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
   }
 
-  function renderParkingTable() {
-    const pv = currentParkingView();
-    if (!pv) return;
+  // 3. BẢNG PARKING VIEW HỢP NHẤT SO SÁNH (Yêu cầu B)
+  function renderUnifiedParkingTable() {
+    if (!basePayload) return;
+    const beforeList = basePayload.parking_view;
+    const afterList = (optimizePayload && optimizePayload.available) ? optimizePayload.after.parking_view : null;
+
     const dayFilter = document.getElementById('filter-day').value;
     const slotFilter = document.getElementById('filter-slot').value;
     const lotFilter = document.getElementById('filter-lot').value;
-    const tbody = document.getElementById('parking-table-body');
+    const tbody = document.getElementById('unified-parking-table-body');
     tbody.innerHTML = '';
 
-    const list = pv.filter(r =>
+    const afterMap = {};
+    if (afterList) {
+      afterList.forEach(r => { afterMap[`${r.day}_${r.slot}_${r.parking_lot}`] = r; });
+    }
+
+    const filtered = beforeList.filter(r =>
       (dayFilter === 'ALL' || r.day === dayFilter) &&
       (slotFilter === 'ALL' || r.slot === slotFilter) &&
       (lotFilter === 'ALL' || r.parking_lot === lotFilter)
     );
-    document.getElementById('table-record-count').innerText = `Hiển thị ${list.length} / ${pv.length} bản ghi`;
 
-    list.forEach(item => {
+    document.getElementById('table-record-count').innerHTML = `
+      <span>Hiển thị <strong>${filtered.length}</strong> / ${beforeList.length} bản ghi</span>
+      <span class="text-slate-400">Đơn vị: % Worst Util</span>
+    `;
+
+    filtered.forEach(bRow => {
+      const key = `${bRow.day}_${bRow.slot}_${bRow.parking_lot}`;
+      const aRow = afterMap[key];
+
+      const bUtil = bRow.worst_utilization_pct;
+      const aUtil = aRow ? aRow.worst_utilization_pct : bUtil;
+      const delta = +(aUtil - bUtil).toFixed(1);
+
+      const renderBadge = (status) => {
+        if (status === 'BOTTLENECK') return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800">BOTTLENECK</span>`;
+        if (status === 'PEAK') return `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">PEAK</span>`;
+        return `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">OK</span>`;
+      };
+
+      let deltaHtml = `<span class="text-slate-500 font-mono">0.0%</span>`;
+      if (delta < 0) deltaHtml = `<span class="text-emerald-400 font-mono font-bold">↓ ${delta}%</span>`;
+      else if (delta > 0) deltaHtml = `<span class="text-rose-400 font-mono font-bold">↑ +${delta}%</span>`;
+
       const tr = document.createElement('tr');
-      tr.className = 'border-b border-slate-800/40';
-      let badge = `<span class="px-2 py-0.5 rounded-full text-xs bg-emerald-950 text-emerald-400 border border-emerald-800">OK</span>`;
-      let bar = 'bg-emerald-400';
-      if (item.status === 'BOTTLENECK') { badge = `<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-rose-950 text-rose-400 border border-rose-800">BOTTLENECK</span>`; bar = 'bg-rose-500'; }
-      else if (item.status === 'PEAK') { badge = `<span class="px-2 py-0.5 rounded-full text-xs bg-amber-950 text-amber-400 border border-amber-800">PEAK</span>`; bar = 'bg-amber-400'; }
-
+      tr.className = 'hover:bg-slate-800/30 transition';
       tr.innerHTML = `
-        <td class="py-2 px-2 text-left font-semibold text-slate-300">${item.day}</td>
-        <td class="py-2 px-2 text-left text-slate-400">${item.slot_label}</td>
-        <td class="py-2 px-2"><span class="px-2 py-0.5 rounded bg-slate-800 font-mono font-bold text-cyan-400">${item.parking_lot}</span></td>
-        <td class="py-2 px-2 text-right font-mono">${item.incoming.toLocaleString('vi-VN')}</td>
-        <td class="py-2 px-2 text-right font-mono">${item.outgoing.toLocaleString('vi-VN')}</td>
-        <td class="py-2 px-2 text-right font-mono text-emerald-300">${item.checkin_capacity}</td>
-        <td class="py-2 px-2 text-right font-mono text-amber-300">${item.checkout_capacity}</td>
-        <td class="py-2 px-2">
-          <div class="flex items-center gap-2">
-            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden"><div class="h-full ${bar}" style="width:${Math.min(item.worst_utilization_pct,100)}%"></div></div>
-            <span class="font-mono text-xs w-12 text-right">${item.worst_utilization_pct}%</span>
-          </div>
+        <td class="py-2.5 px-3 text-left font-semibold text-slate-300">${bRow.day}</td>
+        <td class="py-2.5 px-3 text-left text-slate-400 font-mono">
+          <strong class="text-cyan-400">${bRow.slot}</strong>
+          <span class="text-[11px] text-slate-500 ml-1">(${bRow.slot_label})</span>
         </td>
-        <td class="py-2 px-2">${badge}</td>`;
+        <td class="py-2 px-2"><span class="px-2 py-0.5 rounded bg-slate-800 font-mono font-bold text-slate-200 border border-slate-700">${bRow.parking_lot}</span></td>
+        <td class="py-2 px-2 text-right font-mono font-semibold ${bUtil > 100 ? 'text-rose-400' : 'text-slate-300'}">${bUtil}%</td>
+        <td class="py-2 px-2 text-right font-mono font-bold ${aUtil > 100 ? 'text-rose-400' : 'text-cyan-400'}">${aRow ? aUtil + '%' : '-'}</td>
+        <td class="py-2.5 px-3 text-right">${aRow ? deltaHtml : '-'}</td>
+        <td class="py-2 px-2">${renderBadge(bRow.status)}</td>
+        <td class="py-2 px-2">${aRow ? renderBadge(aRow.status) : '-'}</td>
+      `;
       tbody.appendChild(tr);
     });
   }
@@ -330,75 +632,367 @@
     document.getElementById('filter-day').value = 'ALL';
     document.getElementById('filter-slot').value = 'ALL';
     document.getElementById('filter-lot').value = 'ALL';
-    renderParkingTable();
+    renderUnifiedParkingTable();
   }
 
+  function populateSlotFilter(slotLabels) {
+    const sel = document.getElementById('filter-slot');
+    sel.innerHTML = '<option value="ALL">Tất cả khung giờ giao ca</option>';
+    Object.keys(slotLabels).sort().forEach(slot => {
+      const opt = document.createElement('option');
+      opt.value = slot;
+      opt.innerText = `${slot} — ${slotLabels[slot]}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  // 4. GỌI API OPTIMIZE & RENDER MOVE CARDS (Yêu cầu C)
   async function runOptimization() {
     const scenario = document.getElementById('scenario-selector').value;
     const includeEvents = document.getElementById('events-selector').value;
     const maxMoves = document.getElementById('max-moves-input').value || 3;
     const btn = document.getElementById('btn-run-optimize');
-    const status = document.getElementById('optimize-status');
 
     btn.disabled = true;
-    btn.innerText = 'Đang chạy...';
-    status.innerText = 'Đang gọi optimizer thật (optimize_multi_move) - lần đầu cho tổ hợp tham số này có thể mất 10-15 giây...';
+    btn.innerText = 'Đang gọi optimizer...';
 
     try {
       const res = await fetch(`/api/optimize?scenario=${scenario}&include_events=${includeEvents}&max_moves=${maxMoves}`);
       const data = await res.json();
-      if (!data.available) {
-        status.innerText = 'Optimizer chưa sẵn sàng: ' + (data.reason || 'không rõ lý do');
-        btn.disabled = false;
-        btn.innerText = 'Chạy tối ưu';
-        return;
-      }
+      if (!data.available) throw new Error(data.reason || 'Optimizer failed');
       optimizePayload = data;
-      status.innerText = `Đã tối ưu xong: ${data.moves_applied} move áp dụng (lý do dừng: ${data.stop_reason}).`;
-      renderOptimizeResult(data);
-      document.getElementById('optimize-result').classList.remove('hidden');
     } catch (err) {
-      status.innerText = 'Lỗi khi gọi /api/optimize: ' + err.message;
+      alert('Lỗi tối ưu: ' + err.message);
+      btn.disabled = false;
+      btn.innerText = 'Chạy tối ưu';
+      return;
     }
+
     btn.disabled = false;
     btn.innerText = 'Chạy lại tối ưu';
+
+    const bB = optimizePayload.before.metrics.bottleneck_points;
+    const aB = optimizePayload.after.metrics.bottleneck_points;
+    document.getElementById('kpi-opt-status').innerText = `Còn ${aB} điểm nghẽn`;
+    document.getElementById('kpi-opt-sub').innerText = `Đã dời ${optimizePayload.moves_applied} ca`;
+    document.getElementById('after-bottleneck-count').innerText = `${aB} điểm nghẽn (Trước: ${bB})`;
+
+    renderSideBySideHeatmaps();
+    renderUnifiedParkingTable();
+    renderMovesCards(optimizePayload.moves, optimizePayload.stop_reason);
   }
 
-  function renderOptimizeResult(data) {
-    const before = data.before.metrics;
-    const after = data.after.metrics;
-    const rows = [
-      ['Bottleneck points', before.bottleneck_points, after.bottleneck_points],
-      ['Total overload excess', before.total_overload_excess.toFixed(3), after.total_overload_excess.toFixed(3)],
-      ['Max worst util', (before.max_worst_util * 100).toFixed(1) + '%', (after.max_worst_util * 100).toFixed(1) + '%'],
-    ];
-    document.getElementById('optimize-metrics-body').innerHTML = rows.map(r =>
-      `<tr><td class="py-1.5 text-slate-300">${r[0]}</td><td class="py-1.5 text-center font-mono">${r[1]}</td><td class="py-1.5 text-center font-mono text-cyan-400">${r[2]}</td></tr>`
-    ).join('');
+  function renderMovesCards(moves, stopReason) {
+    const container = document.getElementById('moves-container');
+    const list = document.getElementById('moves-cards-list');
+    container.classList.remove('hidden');
+    list.innerHTML = '';
 
-    document.getElementById('optimize-moves-list').innerHTML = data.moves.map((m, i) =>
-      `<div class="p-2 rounded-lg bg-slate-800/60 text-[11px] flex justify-between">
-        <span>${i + 1}. ${m.class_id} (${m.num_students} SV, ${m.building})</span>
-        <span class="text-cyan-400 font-mono">${m.from_day} ${m.from_shift} ➔ ${m.to_day} ${m.to_shift}</span>
-      </div>`
-    ).join('') || '<div class="text-slate-500 text-[11px]">Optimizer không tìm được move nào cải thiện objective.</div>';
-  }
+    document.getElementById('moves-applied-badge').innerText = `${moves.length} MOVES`;
+    document.getElementById('moves-stop-reason').innerText = `Lý do dừng: ${stopReason}`;
 
-  function toggleOptimizationView() {
-    if (!optimizePayload || !optimizePayload.available) return;
-    displayMode = displayMode === 'base' ? 'after' : 'base';
-    const btn = document.getElementById('btn-toggle-opt');
-    const badge = document.getElementById('active-schedule-badge');
-    if (displayMode === 'after') {
-      btn.innerText = 'QUAY LẠI HIỆN TRẠNG (BEFORE)';
-      badge.innerText = 'ĐÃ TỐI ƯU (AFTER)';
-      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-800/60';
-    } else {
-      btn.innerText = 'XEM KẾT QUẢ SAU TỐI ƯU (AFTER)';
-      badge.innerText = 'Hiện trạng (BEFORE)';
-      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-950 text-cyan-300 border border-cyan-800/60';
+    if (!moves || moves.length === 0) {
+      list.innerHTML = `<div class="col-span-full p-4 text-center text-slate-500 bg-slate-950/40 rounded-xl">Không tìm thấy MOVE nào cải thiện hàm mục tiêu.</div>`;
+      return;
     }
-    renderAll();
+
+    moves.forEach((m, idx) => {
+      const card = document.createElement('div');
+      card.className = 'bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-cyan-500/50 transition';
+
+      const utilBefore = (m.source_worst_util_before * 100).toFixed(1);
+      const utilAfter = (m.source_worst_util_after * 100).toFixed(1);
+
+      card.innerHTML = `
+        <div>
+          <div class="flex justify-between items-start border-b border-slate-800/80 pb-2 mb-2.5">
+            <span class="text-xs font-black tracking-wide text-cyan-400">MOVE #${m.move_no || (idx + 1)}</span>
+            <span class="text-[11px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">${m.class_id}</span>
+          </div>
+
+          <div class="text-[11px] text-slate-300 mb-2.5">
+            <span class="text-slate-500">Students affected:</span> <strong class="text-white">${m.num_students}</strong> (Toà ${m.building})
+          </div>
+
+          <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80 mb-3 font-mono text-xs space-y-1">
+            <div class="text-rose-400 font-semibold flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+              BEFORE: ${m.from_day} · ${m.from_shift} · ${m.from_room || 'Phòng cũ'}
+            </div>
+            <div class="text-slate-500 pl-3">↓</div>
+            <div class="text-emerald-400 font-semibold flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              AFTER: ${m.to_day} · ${m.to_shift} · ${m.to_room}
+            </div>
+          </div>
+
+          <div class="space-y-1.5 text-[11px]">
+            <div>
+              <span class="text-slate-500 font-semibold">Reason:</span>
+              <div class="text-amber-300 font-mono mt-0.5">
+                ${m.source_bottleneck_day} ${m.source_bottleneck_slot} · ${m.source_bottleneck_lot} · ${m.source_bottleneck_direction} bottleneck
+              </div>
+            </div>
+            <div>
+              <span class="text-slate-500 font-semibold">Impact:</span>
+              <div class="font-mono font-bold text-emerald-400 mt-0.5 flex items-center gap-1.5">
+                <span>${utilBefore}%</span>
+                <span>➔</span>
+                <span>${utilAfter}%</span>
+                <span class="text-[10px] text-emerald-500 font-normal">(Giảm ${(utilBefore - utilAfter).toFixed(1)}%)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      list.appendChild(card);
+    });
+  }
+
+  // 5. GỌI API DATA EDITOR (Yêu cầu A)
+  function openDataEditorModal() {
+    document.getElementById('data-editor-modal').classList.remove('hidden');
+    renderParkingConfigCards();
+    fetchAvailableRoomsFromBackend();
+  }
+
+  function closeDataEditorModal() {
+    document.getElementById('data-editor-modal').classList.add('hidden');
+  }
+
+  function switchEditorTab(tabKey) {
+    ['schedule', 'event', 'parking', 'behavior'].forEach(key => {
+      document.getElementById(`tab-panel-${key}`).classList.add('hidden');
+      const btn = document.getElementById(`tab-btn-${key}`);
+      btn.className = 'py-3 px-4 font-semibold text-slate-400 hover:text-slate-200';
+    });
+    document.getElementById(`tab-panel-${tabKey}`).classList.remove('hidden');
+    const activeBtn = document.getElementById(`tab-btn-${tabKey}`);
+    activeBtn.className = 'py-3 px-4 font-bold border-b-2 border-cyan-400 text-cyan-400';
+  }
+
+  // Gọi API lọc phòng: capacity >= students VÀ đang trống trong ca đó
+  async function fetchAvailableRoomsFromBackend() {
+    const classSel = document.getElementById('form-sched-class');
+    const students = classSel.options[classSel.selectedIndex].getAttribute('data-students') || 80;
+    const day = document.getElementById('form-sched-day').value;
+    const shift = document.getElementById('form-sched-shift').value;
+    const building = document.getElementById('form-sched-building').value;
+    const roomSelect = document.getElementById('form-sched-room');
+
+    roomSelect.innerHTML = '<option>Đang tìm phòng...</option>';
+
+    try {
+      const res = await fetch(`/api/rooms/available?building=${building}&day=${day}&shift=${shift}&min_capacity=${students}`);
+      const data = await res.json();
+      roomSelect.innerHTML = '';
+
+      if (!data.rooms || data.rooms.length === 0) {
+        const opt = document.createElement('option');
+        opt.text = `Hết phòng đủ chỗ (cần >= ${students} SV)`;
+        opt.disabled = true;
+        roomSelect.appendChild(opt);
+        return;
+      }
+
+      data.rooms.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.room_id;
+        opt.text = `${r.room_id} (chứa ${r.room_capacity} SV) - Trống`;
+        roomSelect.appendChild(opt);
+      });
+    } catch (err) {
+      roomSelect.innerHTML = '<option>Lỗi tải danh sách phòng</option>';
+    }
+  }
+
+  function validateScheduleForm() {
+    const msg = document.getElementById('schedule-form-msg');
+    const room = document.getElementById('form-sched-room').value;
+    if (!room || room.includes('Hết phòng') || room.includes('Đang tìm')) {
+      msg.innerHTML = '<span class="text-rose-400 font-bold">LỖI: Không tìm thấy phòng thỏa mãn điều kiện!</span>';
+      return false;
+    }
+    msg.innerHTML = '<span class="text-emerald-400 font-bold">HỢP LỆ: Phòng đủ capacity và không có xung đột lịch.</span>';
+    return true;
+  }
+
+  // Gọi POST /api/schedule/add
+  async function submitScheduleAddAPI() {
+    if (!validateScheduleForm()) return;
+    const payload = {
+      class_id: document.getElementById('form-sched-class').value,
+      day_of_week: document.getElementById('form-sched-day').value,
+      shift: document.getElementById('form-sched-shift').value,
+      room_id: document.getElementById('form-sched-room').value,
+    };
+
+    try {
+      const res = await fetch('/api/schedule/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Thất bại');
+      alert(data.message || 'Thành công!');
+      closeDataEditorModal();
+      fetchDashboardData();
+    } catch (err) {
+      alert('Lỗi: ' + err.message);
+    }
+  }
+
+  // Gọi POST /api/event/add
+  async function submitEventAddAPI() {
+    const payload = {
+      event_name: document.getElementById('form-evt-name').value,
+      day_of_week: document.getElementById('form-evt-day').value,
+      shift: document.getElementById('form-evt-shift').value,
+      building: document.getElementById('form-evt-building').value,
+      num_students: parseInt(document.getElementById('form-evt-students').value),
+      motorbike_ratio: parseFloat(document.getElementById('form-evt-ratio').value),
+    };
+
+    try {
+      const res = await fetch('/api/event/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Thất bại');
+      alert(data.message);
+      closeDataEditorModal();
+      fetchDashboardData();
+    } catch (err) {
+      alert('Lỗi: ' + err.message);
+    }
+  }
+
+  // Render Parking & tự tính throughput: gates * 1800 / sec
+  function calcThroughput(gates, sec) {
+    if (!sec || sec <= 0) return 0;
+    return Math.round((gates * 1800) / sec);
+  }
+
+  function renderParkingConfigCards() {
+    const container = document.getElementById('parking-config-cards');
+    container.innerHTML = '';
+
+    ['P1', 'P2', 'P3', 'P4'].forEach(lot => {
+      const p = parkingConfigState[lot];
+      const inTp = calcThroughput(p.in_gates, p.in_sec);
+      const outTp = calcThroughput(p.out_gates, p.out_sec);
+
+      const div = document.createElement('div');
+      div.className = 'bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-3';
+      div.innerHTML = `
+        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+          <strong class="text-white text-xs flex items-center gap-1.5 font-bold">
+            <span class="w-2 h-2 rounded-full bg-cyan-400"></span> Nhà xe ${lot}
+          </strong>
+          <button onclick="submitParkingUpdateAPI('${lot}')" class="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold text-[10px] transition">
+            Lưu bãi ${lot}
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <label class="text-slate-400 text-[11px]">Sức chứa (capacity slots)</label>
+            <input type="number" value="${p.cap}" onchange="parkingConfigState['${lot}'].cap = +this.value" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white">
+          </div>
+          <div></div>
+
+          <div>
+            <label class="text-slate-400 text-[11px]">Cổng vào mở (gates)</label>
+            <input type="number" min="1" max="6" value="${p.in_gates}" oninput="updateLotCalculation('${lot}', 'in_gates', +this.value)" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white">
+          </div>
+          <div>
+            <label class="text-slate-400 text-[11px]">Giây / xe vào (sec)</label>
+            <input type="number" min="1" max="60" value="${p.in_sec}" oninput="updateLotCalculation('${lot}', 'in_sec', +this.value)" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white">
+          </div>
+
+          <div class="col-span-2 bg-slate-900/80 p-2 rounded border border-slate-800 flex justify-between items-center">
+            <span class="text-slate-400 text-[11px]">Check-in Throughput (Tự tính):</span>
+            <span id="${lot}-in-tp" class="font-mono text-emerald-400 font-bold">${inTp} xe/30p</span>
+          </div>
+
+          <div>
+            <label class="text-slate-400 text-[11px]">Cổng ra mở (gates)</label>
+            <input type="number" min="1" max="6" value="${p.out_gates}" oninput="updateLotCalculation('${lot}', 'out_gates', +this.value)" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white">
+          </div>
+          <div>
+            <label class="text-slate-400 text-[11px]">Giây / xe ra (sec)</label>
+            <input type="number" min="1" max="60" value="${p.out_sec}" oninput="updateLotCalculation('${lot}', 'out_sec', +this.value)" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white">
+          </div>
+
+          <div class="col-span-2 bg-slate-900/80 p-2 rounded border border-slate-800 flex justify-between items-center">
+            <span class="text-slate-400 text-[11px]">Check-out Throughput (Tự tính):</span>
+            <span id="${lot}-out-tp" class="font-mono text-amber-400 font-bold">${outTp} xe/30p</span>
+          </div>
+        </div>
+      `;
+      container.appendChild(div);
+    });
+  }
+
+  function updateLotCalculation(lot, key, value) {
+    parkingConfigState[lot][key] = value;
+    const p = parkingConfigState[lot];
+    document.getElementById(`${lot}-in-tp`).innerText = `${calcThroughput(p.in_gates, p.in_sec)} xe/30p`;
+    document.getElementById(`${lot}-out-tp`).innerText = `${calcThroughput(p.out_gates, p.out_sec)} xe/30p`;
+  }
+
+  // Gọi POST /api/parking/update
+  async function submitParkingUpdateAPI(lotId) {
+    const p = parkingConfigState[lotId];
+    const scenario = document.getElementById('scenario-selector').value;
+    const payload = {
+      parking_lot_id: lotId,
+      scenario: scenario,
+      capacity_slots: p.cap,
+      checkin_gates_open: p.in_gates,
+      checkin_sec_per_vehicle: p.in_sec,
+      checkout_gates_open: p.out_gates,
+      checkout_sec_per_vehicle: p.out_sec,
+    };
+
+    try {
+      const res = await fetch('/api/parking/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      alert(data.message);
+      fetchDashboardData();
+    } catch (err) {
+      alert('Lỗi cập nhật bãi xe: ' + err.message);
+    }
+  }
+
+  // Gọi POST /api/behavior/update (Digital Twin assumption)
+  async function submitBehaviorUpdateAPI() {
+    const payload = {
+      near_gap1: parseFloat(document.getElementById('range-near-gap').value) / 100,
+      far_gap1: parseFloat(document.getElementById('range-far-gap').value) / 100,
+      default_motorbike_ratio: parseFloat(document.getElementById('range-default-moto').value) / 100,
+    };
+
+    try {
+      const res = await fetch('/api/behavior/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      alert(data.message);
+      closeDataEditorModal();
+      fetchDashboardData();
+    } catch (err) {
+      alert('Lỗi: ' + err.message);
+    }
   }
 
   window.addEventListener('DOMContentLoaded', fetchDashboardData);

@@ -1,31 +1,28 @@
-"""Build dashboard data from the simulation and optimization modules."""
-
 from __future__ import annotations
 
 import sys
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from run_simulation import (
     DATASET_DIR,
     SHIFT_ORDER,
-    build_window_slot_map,
     load_dataset,
-    run_simulation_from_data,
+    build_window_slot_map,
+    run_simulation_from_dataset,
 )
 
 HERE = Path(__file__).resolve().parent
 OPTIMIZER_DIR = HERE / "optimization"
 
-# Load the existing optimization module without changing its public API.
 try:
     sys.path.insert(0, str(OPTIMIZER_DIR))
-    from se_bridge import SimulationEngineerBridge  # trong optimization/
-    from optimizer import optimize_multi_move  # trong optimization/
-
+    from se_bridge import SimulationEngineerBridge  # type: ignore
+    from optimizer import optimize_multi_move  # type: ignore
     _OPTIMIZER_IMPORT_ERROR: Optional[Exception] = None
-except (ImportError, FileNotFoundError, AttributeError) as exc:  # pragma: no cover
+except Exception as exc:  # surfaced through API payload
     SimulationEngineerBridge = None  # type: ignore
     optimize_multi_move = None  # type: ignore
     _OPTIMIZER_IMPORT_ERROR = exc
@@ -36,21 +33,19 @@ DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 def build_slot_labels(schedule: List[dict]) -> Dict[str, str]:
     _, bounds = build_window_slot_map(schedule)
 
-    def shift_touching(slot: str) -> List[str]:
-        # S(i) joins the previous departure with the next arrival.
+    def touching(slot: str) -> str:
         idx = int(slot[1:])
-        touching = []
+        labels = []
         if 0 <= idx - 1 < len(SHIFT_ORDER):
-            touching.append(f"tan {SHIFT_ORDER[idx - 1]}")
+            labels.append(f"tan {SHIFT_ORDER[idx - 1]}")
         if 0 <= idx < len(SHIFT_ORDER):
-            touching.append(f"vao {SHIFT_ORDER[idx]}")
-        return touching
+            labels.append(f"vao {SHIFT_ORDER[idx]}")
+        return " / ".join(labels)
 
-    labels = {}
-    for slot, (start, end) in bounds.items():
-        touching = " / ".join(shift_touching(slot))
-        labels[slot] = f"{start}-{end} ({touching})"
-    return labels
+    return {
+        slot: f"{start}-{end} ({touching(slot)})"
+        for slot, (start, end) in bounds.items()
+    }
 
 
 def build_heatmap(schedule: List[dict]) -> dict:
@@ -71,71 +66,63 @@ def build_parking_view(
     scenario: str,
     slot_labels: Dict[str, str],
 ) -> List[dict]:
-    cap_slots_map = {
-        r["parking_lot_id"]: int(r["capacity_slots"])
-        for r in parking_rows
-        if r["scenario"] == scenario
+    capacity_map = {
+        row["parking_lot_id"]: int(row["capacity_slots"])
+        for row in parking_rows
+        if row["scenario"] == scenario
     }
 
-    view = []
-    for r in results:
-        lot = r["lot_id"]
-        slot = r.get("slot", r.get("shift"))
-        view.append(
-            {
-                "day": r["day"],
-                "slot": slot,
-                "slot_label": slot_labels.get(slot, slot),
-                "parking_lot": lot,
-                "incoming": round(r["incoming"], 2),
-                "outgoing": round(r["outgoing"], 2),
-                "parking_capacity": cap_slots_map.get(lot, 0),
-                "checkin_capacity": r["checkin_capacity"],
-                "checkout_capacity": r["checkout_capacity"],
-                "checkin_utilization_pct": round(r["checkin_util"] * 100, 1),
-                "checkout_utilization_pct": round(r["checkout_util"] * 100, 1),
-                "worst_utilization_pct": round(r["worst_util"] * 100, 1),
-                "worst_util": r["worst_util"],
-                "bottleneck_direction": r["bottleneck_direction"],
-                "status": r["status"],
-            }
-        )
-    return view
+    return [
+        {
+            "day": row["day"],
+            "slot": row["shift"],
+            "slot_label": slot_labels.get(row["shift"], row["shift"]),
+            "parking_lot": row["lot_id"],
+            "incoming": round(float(row["incoming"]), 2),
+            "outgoing": round(float(row["outgoing"]), 2),
+            "parking_capacity": capacity_map.get(row["lot_id"], row.get("parking_capacity", 0)),
+            "checkin_capacity": row["checkin_capacity"],
+            "checkout_capacity": row["checkout_capacity"],
+            "checkin_utilization_pct": round(float(row["checkin_util"]) * 100, 1),
+            "checkout_utilization_pct": round(float(row["checkout_util"]) * 100, 1),
+            "worst_utilization_pct": round(float(row["worst_util"]) * 100, 1),
+            "worst_util": float(row["worst_util"]),
+            "bottleneck_direction": row["bottleneck_direction"],
+            "status": row["status"],
+        }
+        for row in results
+    ]
 
 
-def build_kpi(schedule: List[dict], parking_view: List[dict]) -> dict:
-    total_sessions = len(schedule)
-    total_students = sum(int(r["num_students"]) for r in schedule)
-
+def build_kpi(data: Dict[str, List[dict]], parking_view: List[dict]) -> dict:
+    schedule = data["schedule"]
     heatmap = build_heatmap(schedule)
+
     peak_day, peak_shift, peak_value = None, None, -1
     for day, shifts in heatmap.items():
         for shift, value in shifts.items():
             if value > peak_value:
                 peak_day, peak_shift, peak_value = day, shift, value
-    peak_demand = {"day": peak_day, "shift": peak_shift, "value": peak_value}
 
-    worst_row = max(parking_view, key=lambda r: r["worst_util"])
-    worst_parking = {
-        "lot": worst_row["parking_lot"],
-        "day": worst_row["day"],
-        "slot": worst_row["slot"],
-        "slot_label": worst_row["slot_label"],
-        "direction": worst_row["bottleneck_direction"],
-        "utilization_pct": round(worst_row["worst_util"] * 100, 1),
-    }
-    worst_day_time = {
-        "day": worst_row["day"],
-        "slot": worst_row["slot"],
-        "slot_label": worst_row["slot_label"],
-    }
-
+    worst_row = max(parking_view, key=lambda row: row["worst_util"])
     return {
-        "total_sessions": total_sessions,
-        "total_students": total_students,
-        "peak_demand": peak_demand,
-        "worst_parking": worst_parking,
-        "worst_day_time": worst_day_time,
+        "total_sessions": len(schedule),
+        # Unique students, not the sum of all session headcounts.
+        "total_students": len(data.get("students", [])),
+        "peak_demand": {"day": peak_day, "shift": peak_shift, "value": peak_value},
+        "worst_parking": {
+            "lot": worst_row["parking_lot"],
+            "day": worst_row["day"],
+            "slot": worst_row["slot"],
+            "slot_label": worst_row["slot_label"],
+            "direction": worst_row["bottleneck_direction"],
+            "utilization_pct": round(worst_row["worst_util"] * 100, 1),
+        },
+        "worst_day_time": {
+            "day": worst_row["day"],
+            "slot": worst_row["slot"],
+            "slot_label": worst_row["slot_label"],
+        },
     }
 
 
@@ -147,21 +134,24 @@ def build_dashboard_payload(
     scenario: str = "Normal",
     include_events: bool = True,
     dataset_dir: Path = DATASET_DIR,
+    data: Optional[Dict[str, List[dict]]] = None,
 ) -> dict:
-    data = load_dataset(dataset_dir)
-    schedule, events, parking = data["schedule"], data["events"], data["parking"]
-
-    results = run_simulation_from_data(
-        schedule, events, parking, scenario=scenario, include_events=include_events
+    current = data if data is not None else load_dataset(dataset_dir)
+    schedule = current["schedule"]
+    results = run_simulation_from_dataset(
+        current,
+        scenario=scenario,
+        include_events=include_events,
+        full_grid=True,
     )
     slot_labels = build_slot_labels(schedule)
-    parking_view = build_parking_view(results, parking, scenario, slot_labels)
-
+    parking_view = build_parking_view(results, current["parking"], scenario, slot_labels)
     return {
         "scenario": scenario,
         "include_events": include_events,
+        "simulation_model": "student-visit-based",
         "heatmap": build_heatmap(schedule),
-        "kpi": build_kpi(schedule, parking_view),
+        "kpi": build_kpi(current, parking_view),
         "parking_view": _strip_internal(parking_view),
         "slot_labels": slot_labels,
     }
@@ -174,60 +164,42 @@ def build_optimization_payload(
     top_k: int = 10,
     dataset_dir: Path = DATASET_DIR,
     se_file: Optional[Path] = None,
+    data: Optional[Dict[str, List[dict]]] = None,
 ) -> dict:
     if SimulationEngineerBridge is None or optimize_multi_move is None:
-        return {
-            "available": False,
-            "reason": f"optimization/ khong san sang ({_OPTIMIZER_IMPORT_ERROR})",
-        }
+        return {"available": False, "reason": f"Optimizer unavailable: {_OPTIMIZER_IMPORT_ERROR}"}
 
-    data = load_dataset(dataset_dir)
-    schedule, events, parking, rooms = (
-        data["schedule"],
-        data["events"],
-        data["parking"],
-        data["rooms"],
-    )
-
+    current = deepcopy(data) if data is not None else load_dataset(dataset_dir)
     bridge = SimulationEngineerBridge(str(se_file or (HERE / "run_simulation.py")))
     result = optimize_multi_move(
         bridge=bridge,
-        schedule=schedule,
-        rooms=rooms,
-        parking=parking,
-        events=events,
+        data=current,
         scenario=scenario,
         include_events=include_events,
         max_moves=max_moves,
         top_k=top_k,
     )
 
-    slot_labels = build_slot_labels(schedule)
-
-    before_results = run_simulation_from_data(
-        schedule, events, parking, scenario=scenario, include_events=include_events
-    )
-    after_results = run_simulation_from_data(
-        result.optimized_schedule, events, parking, scenario=scenario, include_events=include_events
-    )
-    before_view = _strip_internal(
-        build_parking_view(before_results, parking, scenario, slot_labels)
-    )
-    after_view = _strip_internal(
-        build_parking_view(after_results, parking, scenario, slot_labels)
-    )
+    slot_labels = build_slot_labels(current["schedule"])
+    before_view = _strip_internal(build_parking_view(
+        result.baseline_results, current["parking"], scenario, slot_labels
+    ))
+    after_view = _strip_internal(build_parking_view(
+        result.final_results, current["parking"], scenario, slot_labels
+    ))
 
     return {
         "available": True,
         "scenario": scenario,
         "include_events": include_events,
+        "simulation_model": "student-visit-based",
         "max_moves": max_moves,
         "moves_applied": len(result.moves),
         "stop_reason": result.stop_reason,
         "moves": result.moves,
         "before": {
             "metrics": result.baseline_metrics,
-            "heatmap": build_heatmap(schedule),
+            "heatmap": build_heatmap(current["schedule"]),
             "parking_view": before_view,
         },
         "after": {
@@ -242,18 +214,16 @@ if __name__ == "__main__":
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="In thu payload dashboard (debug)")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", default="Normal", choices=["Normal", "Worst"])
-    parser.add_argument("--no-events", action="store_true")
-    parser.add_argument("--optimize", action="store_true", help="In payload /api/optimize thay vi /api/dashboard")
+    parser.add_argument("--include-events", action="store_true")
+    parser.add_argument("--optimize", action="store_true")
     parser.add_argument("--max-moves", type=int, default=3)
     args = parser.parse_args()
 
-    if args.optimize:
-        payload = build_optimization_payload(
-            scenario=args.scenario, include_events=not args.no_events, max_moves=args.max_moves
-        )
-    else:
-        payload = build_dashboard_payload(scenario=args.scenario, include_events=not args.no_events)
-
+    payload = (
+        build_optimization_payload(args.scenario, args.include_events, args.max_moves)
+        if args.optimize
+        else build_dashboard_payload(args.scenario, args.include_events)
+    )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
